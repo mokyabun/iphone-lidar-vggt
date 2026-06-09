@@ -66,6 +66,7 @@ struct BackendMetrics: Decodable {
     let vggtPoints: Int
     let meshVertices: Int
     let meshFaces: Int
+    let meshMethod: String?
     let finalOutputType: String
     let objectMaskBackend: String?
     let cameraPathM: Double?
@@ -77,6 +78,7 @@ struct BackendMetrics: Decodable {
     let objectBoundsMaxM: [Double]?
     let objectExtentM: [Double]?
     let warnings: [String]
+    let meshOutput: String?
 }
 
 enum BackendError: LocalizedError {

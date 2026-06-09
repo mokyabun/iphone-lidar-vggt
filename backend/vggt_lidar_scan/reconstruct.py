@@ -47,8 +47,19 @@ def reconstruct_scan(
         lidar_output = output_dir / "scan_lidar_points.ply"
         write_point_cloud_ply(lidar_output, points, colors)
 
-        run_tsdf = reconstruct_mesh or _env_bool("SCAN_RUN_TSDF", False)
-        tsdf_output = try_open3d_tsdf(root, selected, output_dir, warnings, preserve_color, object_masks) if run_tsdf else None
+        run_mesh = reconstruct_mesh or _env_bool("SCAN_RUN_TSDF", False)
+        mesh_method = _mesh_method() if run_mesh else None
+        mesh_output, tsdf_output, actual_mesh_method = build_mesh_output(
+            root,
+            selected,
+            output_dir,
+            warnings,
+            points,
+            colors,
+            preserve_color,
+            object_masks,
+            mesh_method,
+        ) if run_mesh else (None, None, None)
         vggt_output: Path | None = None
         vggt_points = 0
         if run_vggt_stage:
@@ -60,7 +71,7 @@ def reconstruct_scan(
         mesh_vertices = 0
         mesh_faces = 0
         final_output = output_dir / "scan_final.ply"
-        final_source = tsdf_output if reconstruct_mesh and tsdf_output else vggt_output or tsdf_output or lidar_output
+        final_source = mesh_output if reconstruct_mesh and mesh_output else vggt_output or mesh_output or lidar_output
         if final_source.exists():
             mesh_vertices, mesh_faces = count_ply_elements(final_source)
         shutil.copyfile(final_source, final_output)
@@ -74,6 +85,7 @@ def reconstruct_scan(
         vggt_points=vggt_points,
         mesh_vertices=mesh_vertices if mesh_faces else 0,
         mesh_faces=mesh_faces,
+        mesh_method=actual_mesh_method if mesh_faces else None,
         final_output_type="mesh" if mesh_faces else "point_cloud",
         object_mask_backend=object_mask_backend,
         camera_path_m=_camera_path_m(frames),
@@ -86,6 +98,7 @@ def reconstruct_scan(
         object_extent_m=object_bounds[2],
         final_output=str(final_output),
         lidar_output=str(lidar_output),
+        mesh_output=str(mesh_output) if mesh_output else None,
         tsdf_output=str(tsdf_output) if tsdf_output else None,
         vggt_output=str(vggt_output) if vggt_output else None,
         warnings=warnings,
@@ -145,6 +158,96 @@ def build_object_masks(root: Path, frames: list[FrameRecord]) -> dict[str, np.nd
     return masks
 
 
+def build_mesh_output(
+    root: Path,
+    frames: list[FrameRecord],
+    output_dir: Path,
+    warnings: list[str],
+    points: np.ndarray,
+    colors: np.ndarray,
+    preserve_color: bool,
+    object_masks: dict[str, np.ndarray] | None,
+    mesh_method: str | None,
+) -> tuple[Path | None, Path | None, str | None]:
+    if mesh_method in {"printable", "printable_alpha", "alpha", "alpha_shape"}:
+        printable = try_open3d_printable_alpha_mesh(points, colors, output_dir, warnings, preserve_color)
+        if printable:
+            return printable, None, "printable_alpha"
+        tsdf = try_open3d_tsdf(root, frames, output_dir, warnings, preserve_color, object_masks)
+        return tsdf, tsdf, "object_tsdf" if tsdf else None
+    if mesh_method in {"tsdf", "object_tsdf"}:
+        tsdf = try_open3d_tsdf(root, frames, output_dir, warnings, preserve_color, object_masks)
+        return tsdf, tsdf, "object_tsdf" if tsdf else None
+
+    warnings.append(f"Unknown MESH_METHOD={mesh_method}; falling back to printable_alpha.")
+    printable = try_open3d_printable_alpha_mesh(points, colors, output_dir, warnings, preserve_color)
+    if printable:
+        return printable, None, "printable_alpha"
+    tsdf = try_open3d_tsdf(root, frames, output_dir, warnings, preserve_color, object_masks)
+    return tsdf, tsdf, "object_tsdf" if tsdf else None
+
+
+def try_open3d_printable_alpha_mesh(
+    points: np.ndarray,
+    colors: np.ndarray,
+    output_dir: Path,
+    warnings: list[str],
+    preserve_color: bool = True,
+) -> Path | None:
+    try:
+        import open3d as o3d  # type: ignore
+    except Exception:
+        _append_warning_once(warnings, "Open3D is not installed; wrote point-cloud baseline only.")
+        return None
+
+    finite = np.isfinite(points).all(axis=1) if points.size else np.empty((0,), dtype=bool)
+    points = points[finite]
+    colors = colors[finite] if colors.shape[0] == finite.shape[0] else np.empty((0, 3), dtype=np.uint8)
+    minimum_points = _env_int("OBJECT_PRINTABLE_MIN_POINTS", 80)
+    if points.shape[0] < minimum_points:
+        warnings.append(f"Printable mesh skipped: only {points.shape[0]} object points.")
+        return None
+
+    try:
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(points.astype(np.float64))
+        if preserve_color and colors.shape[0] == points.shape[0]:
+            pcd.colors = o3d.utility.Vector3dVector(np.clip(colors.astype(np.float64) / 255.0, 0.0, 1.0))
+
+        voxel = _env_float("OBJECT_PRINTABLE_POINT_VOXEL_METERS", 0.0)
+        if voxel > 0:
+            pcd = pcd.voxel_down_sample(voxel)
+        if len(pcd.points) >= 30:
+            pcd, _ = pcd.remove_statistical_outlier(
+                nb_neighbors=_env_int("OBJECT_PRINTABLE_OUTLIER_NEIGHBORS", 12),
+                std_ratio=_env_float("OBJECT_PRINTABLE_OUTLIER_STD_RATIO", 2.0),
+            )
+        if len(pcd.points) < minimum_points:
+            warnings.append(f"Printable mesh skipped after outlier removal: only {len(pcd.points)} object points.")
+            return None
+
+        alpha = _printable_alpha_radius(pcd)
+        candidates = [alpha, alpha * 1.25, alpha * 1.5, alpha * 2.0]
+        mesh = _best_alpha_mesh(o3d, pcd, candidates)
+        if mesh is None or len(mesh.triangles) == 0:
+            warnings.append("Printable alpha mesh skipped: alpha shape produced no triangles.")
+            return None
+
+        mesh = _postprocess_printable_mesh(mesh, pcd, o3d)
+        if preserve_color and len(mesh.vertices) and pcd.has_colors():
+            _transfer_nearest_colors(mesh, pcd, o3d)
+        output = output_dir / "scan_object_printable_mesh.ply"
+        if not o3d.io.write_triangle_mesh(str(output), mesh, write_ascii=True):
+            warnings.append("Printable alpha mesh export failed; wrote point-cloud baseline only.")
+            return None
+        if not mesh.is_watertight():
+            warnings.append("Printable alpha mesh is not watertight; it may need repair before 3D printing.")
+        return output
+    except Exception as exc:  # noqa: BLE001 - printable mesh is a best-effort path.
+        warnings.append(f"Printable alpha mesh skipped: {exc}")
+        return None
+
+
 def try_open3d_tsdf(
     root: Path,
     frames: list[FrameRecord],
@@ -156,7 +259,7 @@ def try_open3d_tsdf(
     try:
         import open3d as o3d  # type: ignore
     except Exception:
-        warnings.append("Open3D is not installed; wrote point-cloud baseline only.")
+        _append_warning_once(warnings, "Open3D is not installed; wrote point-cloud baseline only.")
         return None
 
     try:
@@ -244,6 +347,10 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _mesh_method() -> str:
+    return os.environ.get("MESH_METHOD", "printable_alpha").strip().lower()
+
+
 def _postprocess_open3d_mesh(mesh, o3d):  # noqa: ANN001, ANN201 - Open3D runtime type.
     mesh.remove_degenerate_triangles()
     mesh.remove_duplicated_triangles()
@@ -267,6 +374,107 @@ def _postprocess_open3d_mesh(mesh, o3d):  # noqa: ANN001, ANN201 - Open3D runtim
         mesh = mesh.simplify_quadric_decimation(target_number_of_triangles=target_triangles)
     mesh.compute_vertex_normals()
     return mesh
+
+
+def _printable_alpha_radius(pcd) -> float:  # noqa: ANN001
+    explicit = os.environ.get("OBJECT_ALPHA_METERS")
+    if explicit:
+        try:
+            return max(1e-4, float(explicit))
+        except ValueError:
+            pass
+
+    distances = np.asarray(pcd.compute_nearest_neighbor_distance())
+    finite = distances[np.isfinite(distances) & (distances > 0)]
+    bbox_extent = np.asarray(pcd.get_axis_aligned_bounding_box().get_extent(), dtype=np.float64)
+    min_extent = float(np.max([np.min(bbox_extent[bbox_extent > 0]) if np.any(bbox_extent > 0) else 0.02, 0.02]))
+    if finite.size:
+        radius = float(np.median(finite)) * _env_float("OBJECT_ALPHA_NEIGHBOR_FACTOR", 8.0)
+    else:
+        radius = min_extent * 0.18
+    lower = min_extent * _env_float("OBJECT_ALPHA_MIN_EXTENT_FRACTION", 0.12)
+    upper = min_extent * _env_float("OBJECT_ALPHA_MAX_EXTENT_FRACTION", 0.5)
+    return float(np.clip(radius, lower, upper))
+
+
+def _best_alpha_mesh(o3d, pcd, alpha_candidates: list[float]):  # noqa: ANN001, ANN201
+    best = None
+    best_score = (-1, -1, -1, -1)
+    for alpha in alpha_candidates:
+        if alpha <= 0:
+            continue
+        try:
+            mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_alpha_shape(pcd, alpha)
+        except Exception:
+            continue
+        mesh.remove_degenerate_triangles()
+        mesh.remove_duplicated_triangles()
+        mesh.remove_duplicated_vertices()
+        mesh.remove_non_manifold_edges()
+        mesh.remove_unreferenced_vertices()
+        if len(mesh.triangles) == 0:
+            continue
+        try:
+            mesh.orient_triangles()
+        except Exception:
+            pass
+        mesh.compute_vertex_normals()
+        score = (
+            int(mesh.is_watertight()),
+            int(mesh.is_edge_manifold()),
+            int(mesh.is_vertex_manifold()),
+            len(mesh.triangles),
+        )
+        if score > best_score:
+            best = mesh
+            best_score = score
+    return best
+
+
+def _postprocess_printable_mesh(mesh, pcd, o3d):  # noqa: ANN001, ANN201
+    if len(mesh.triangles):
+        labels, counts, _ = mesh.cluster_connected_triangles()
+        labels_np = np.asarray(labels)
+        counts_np = np.asarray(counts)
+        if counts_np.size:
+            keep_label = int(np.argmax(counts_np))
+            mesh.remove_triangles_by_mask((labels_np != keep_label).tolist())
+            mesh.remove_unreferenced_vertices()
+
+    subdivision_iterations = _env_int("OBJECT_PRINTABLE_SUBDIVISION_ITERATIONS", 1)
+    if subdivision_iterations > 0 and 0 < len(mesh.triangles) < _env_int("OBJECT_PRINTABLE_SUBDIVIDE_MAX_FACES", 5000):
+        mesh = mesh.subdivide_loop(number_of_iterations=subdivision_iterations)
+
+    smoothing_iterations = _env_int("OBJECT_PRINTABLE_SMOOTH_ITERATIONS", 5)
+    if smoothing_iterations > 0 and len(mesh.triangles):
+        mesh = mesh.filter_smooth_taubin(number_of_iterations=smoothing_iterations)
+
+    target_triangles = _env_int("OBJECT_PRINTABLE_MAX_TRIANGLES", 50000)
+    if len(mesh.triangles) > target_triangles:
+        mesh = mesh.simplify_quadric_decimation(target_number_of_triangles=target_triangles)
+
+    mesh.remove_degenerate_triangles()
+    mesh.remove_duplicated_triangles()
+    mesh.remove_duplicated_vertices()
+    mesh.remove_unreferenced_vertices()
+    try:
+        mesh.orient_triangles()
+    except Exception:
+        pass
+    mesh.compute_vertex_normals()
+    return mesh
+
+
+def _transfer_nearest_colors(mesh, pcd, o3d) -> None:  # noqa: ANN001
+    source_colors = np.asarray(pcd.colors)
+    if source_colors.size == 0:
+        return
+    tree = o3d.geometry.KDTreeFlann(pcd)
+    colors = []
+    for vertex in np.asarray(mesh.vertices):
+        _, indices, _ = tree.search_knn_vector_3d(vertex, 1)
+        colors.append(source_colors[int(indices[0])] if indices else np.array([0.8, 0.8, 0.8]))
+    mesh.vertex_colors = o3d.utility.Vector3dVector(np.clip(np.asarray(colors, dtype=np.float64), 0.0, 1.0))
 
 
 def _bounds(points: np.ndarray) -> tuple[list[float] | None, list[float] | None, list[float] | None]:
@@ -303,3 +511,8 @@ def _camera_extent_m(frames: list[FrameRecord]) -> list[float] | None:
 
 def _round_vector(values: np.ndarray) -> list[float]:
     return [round(float(value), 4) for value in values.tolist()]
+
+
+def _append_warning_once(warnings: list[str], message: str) -> None:
+    if message not in warnings:
+        warnings.append(message)

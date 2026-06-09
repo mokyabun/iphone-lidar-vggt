@@ -50,6 +50,7 @@ class ReconstructionMetrics(BaseModel):
     vggt_points: int = 0
     mesh_vertices: int = 0
     mesh_faces: int = 0
+    mesh_method: str | None = None
     final_output_type: Literal["point_cloud", "mesh"] = "point_cloud"
     object_mask_backend: str | None = None
     camera_path_m: float | None = None
@@ -62,6 +63,7 @@ class ReconstructionMetrics(BaseModel):
     object_extent_m: list[float] | None = None
     final_output: str
     lidar_output: str | None = None
+    mesh_output: str | None = None
     tsdf_output: str | None = None
     vggt_output: str | None = None
     warnings: list[str] = Field(default_factory=list)
