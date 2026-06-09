@@ -35,6 +35,11 @@ def reconstruct_scan(
     with open_scan_package(Path(package_path)) as root:
         frames = read_frames(root)
         selected = [frames[index] for index in keyframe_indices(len(frames), max_frames)]
+        print(
+            f"[reconstruct] frames={len(frames)} selected={len(selected)} "
+            f"vggt={run_vggt_stage} object={extract_object} mesh={reconstruct_mesh}",
+            flush=True,
+        )
         object_masks = build_object_masks(root, selected) if extract_object else None
         points, colors = build_lidar_point_cloud(root, selected, stride, confidence_minimum, preserve_color, object_masks)
 
@@ -116,8 +121,16 @@ def build_lidar_point_cloud(
 
 def build_object_masks(root: Path, frames: list[FrameRecord]) -> dict[str, np.ndarray]:
     masks: dict[str, np.ndarray] = {}
-    for frame in frames:
-        masks[frame.frame_id] = object_mask(root, frame, read_depth(root, frame))
+    backend = os.environ.get("OBJECT_MASK_BACKEND", "sam3_depth").lower()
+    sam_limit = _env_int("OBJECT_SAM_MAX_FRAMES", 3)
+    for index, frame in enumerate(frames):
+        allow_sam = backend in {"sam3", "sam3_depth"} and index < sam_limit
+        print(
+            f"[reconstruct] object mask {index + 1}/{len(frames)} frame={frame.frame_id} "
+            f"backend={backend if allow_sam else 'depth'}",
+            flush=True,
+        )
+        masks[frame.frame_id] = object_mask(root, frame, read_depth(root, frame), allow_sam=allow_sam)
     return masks
 
 

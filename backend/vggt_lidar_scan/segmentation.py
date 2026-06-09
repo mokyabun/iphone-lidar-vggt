@@ -13,10 +13,10 @@ from .models import FrameRecord
 _SAM_MODEL_CACHE: Any | None = None
 
 
-def object_mask(root: Path, frame: FrameRecord, depth: np.ndarray) -> np.ndarray:
+def object_mask(root: Path, frame: FrameRecord, depth: np.ndarray, allow_sam: bool = True) -> np.ndarray:
     backend = os.environ.get("OBJECT_MASK_BACKEND", "sam3_depth").lower()
     depth_mask = central_object_mask(depth)
-    if backend in {"sam3", "sam3_depth"}:
+    if allow_sam and backend in {"sam3", "sam3_depth"}:
         try:
             sam_mask = _sam3_center_mask(root / frame.image_path, depth.shape)
             if sam_mask is not None and _mask_is_plausible(sam_mask):

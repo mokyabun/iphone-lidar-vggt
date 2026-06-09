@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import threading
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -15,6 +17,7 @@ from .reconstruct import reconstruct_scan
 from .vggt_adapter import preload_vggt
 
 RUN_ROOT = Path("runs/api")
+_RECONSTRUCTION_LOCK = threading.Lock()
 
 
 @asynccontextmanager
@@ -51,18 +54,15 @@ def create_job(
     with package_path.open("wb") as handle:
         shutil.copyfileobj(scan_package.file, handle)
 
-    try:
-        metrics = reconstruct_scan(
-            package_path,
-            job_dir / "output",
-            run_vggt_stage=run_vggt,
-            preserve_color=preserve_color,
-            extract_object=extract_object,
-            reconstruct_mesh=reconstruct_mesh,
-        )
-    except Exception as exc:  # noqa: BLE001 - expose job failure in MVP API.
-        (job_dir / "error.txt").write_text(str(exc))
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    metrics = _run_reconstruction(
+        package_path,
+        job_dir / "output",
+        job_dir / "error.txt",
+        run_vggt=run_vggt,
+        preserve_color=preserve_color,
+        extract_object=extract_object,
+        reconstruct_mesh=reconstruct_mesh,
+    )
 
     return {"job_id": job_id, "metrics": metrics.model_dump()}
 
@@ -83,18 +83,15 @@ def reconstruct_now(
     with package_path.open("wb") as handle:
         shutil.copyfileobj(scan_package.file, handle)
 
-    try:
-        metrics = reconstruct_scan(
-            package_path,
-            job_dir / "output",
-            run_vggt_stage=run_vggt,
-            preserve_color=preserve_color,
-            extract_object=extract_object,
-            reconstruct_mesh=reconstruct_mesh,
-        )
-    except Exception as exc:  # noqa: BLE001 - direct demo endpoint should return a clear API error.
-        (job_dir / "error.txt").write_text(str(exc))
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    metrics = _run_reconstruction(
+        package_path,
+        job_dir / "output",
+        job_dir / "error.txt",
+        run_vggt=run_vggt,
+        preserve_color=preserve_color,
+        extract_object=extract_object,
+        reconstruct_mesh=reconstruct_mesh,
+    )
 
     result_path = Path(metrics.final_output)
     return FileResponse(
@@ -135,3 +132,48 @@ def _env_bool(name: str, default: bool) -> bool:
     if value is None:
         return default
     return value not in {"0", "false", "False", "no", "No"}
+
+
+def _run_reconstruction(
+    package_path: Path,
+    output_dir: Path,
+    error_path: Path,
+    *,
+    run_vggt: bool,
+    preserve_color: bool,
+    extract_object: bool,
+    reconstruct_mesh: bool,
+):
+    if not _RECONSTRUCTION_LOCK.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="Another reconstruction is already running. Wait for it to finish and retry.")
+
+    started = time.monotonic()
+    print(
+        f"[api] reconstruction start package={package_path} "
+        f"vggt={run_vggt} color={preserve_color} object={extract_object} mesh={reconstruct_mesh}",
+        flush=True,
+    )
+    try:
+        metrics = reconstruct_scan(
+            package_path,
+            output_dir,
+            run_vggt_stage=run_vggt,
+            preserve_color=preserve_color,
+            extract_object=extract_object,
+            reconstruct_mesh=reconstruct_mesh,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 - direct demo endpoint should return a clear API error.
+        error_path.write_text(str(exc))
+        print(f"[api] reconstruction failed after {time.monotonic() - started:.1f}s: {exc}", flush=True)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        _RECONSTRUCTION_LOCK.release()
+
+    print(
+        f"[api] reconstruction complete after {time.monotonic() - started:.1f}s "
+        f"output={metrics.final_output_type} mesh_faces={metrics.mesh_faces} vggt_points={metrics.vggt_points}",
+        flush=True,
+    )
+    return metrics

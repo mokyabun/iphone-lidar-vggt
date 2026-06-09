@@ -29,6 +29,7 @@ export VGGT_MAX_IMAGES="${VGGT_MAX_IMAGES:-12}"
 export VGGT_PRELOAD="${VGGT_PRELOAD:-1}"
 export OBJECT_MASK_BACKEND="${OBJECT_MASK_BACKEND:-sam3_depth}"
 export OBJECT_SAM_MODEL="${OBJECT_SAM_MODEL:-sam3.pt}"
+export OBJECT_SAM_MAX_FRAMES="${OBJECT_SAM_MAX_FRAMES:-3}"
 export OBJECT_CENTER_FRACTION="${OBJECT_CENTER_FRACTION:-0.35}"
 export OBJECT_DEPTH_BAND_METERS="${OBJECT_DEPTH_BAND_METERS:-0.35}"
 export OBJECT_TSDF_VOXEL_METERS="${OBJECT_TSDF_VOXEL_METERS:-0.008}"
@@ -75,6 +76,17 @@ install_system_packages() {
     libgl1 \
     libglib2.0-0
   run_as_root rm -rf /var/lib/apt/lists/*
+}
+
+prepare_cache_dirs() {
+  log "Preparing cache directories."
+  mkdir -p \
+    "${VGGT_CACHE_ROOT}" \
+    "${HF_HOME}" \
+    "${YOLO_CONFIG_DIR}" \
+    "${YOLO_CONFIG_DIR}/Ultralytics" \
+    "$(dirname "${ULTRALYTICS_SETTINGS}")"
+  chmod -R a+rwX "${VGGT_CACHE_ROOT}" "${YOLO_CONFIG_DIR}" || true
 }
 
 backup_non_git_dir() {
@@ -166,6 +178,7 @@ start_app() {
 
 main() {
   install_system_packages
+  prepare_cache_dirs
   sync_repo
   install_python_packages
   prepare_vggt
