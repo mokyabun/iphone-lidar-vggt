@@ -1,0 +1,16 @@
+.DS_Store
+.venv/
+.pytest_cache/
+__pycache__/
+*.pyc
+*.egg-info/
+runs/
+DerivedData/
+build/
+*.xcuserstate
+*.xcuserdata/
+
+docs
+.dockerignore
+Dockerfile.*
+docker-compose.*.yml
