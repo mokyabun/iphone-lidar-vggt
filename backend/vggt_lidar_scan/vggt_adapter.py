@@ -144,6 +144,7 @@ def _load_vggt_runtime() -> _VGGTRuntime:
         except Exception as exc:  # noqa: BLE001 - report missing optional stack clearly.
             raise RuntimeError(f"VGGT Python imports failed: {exc}") from exc
 
+        _configure_torch_threads(torch)
         device = "cuda" if torch.cuda.is_available() else "cpu"
         if device == "cpu":
             allow_cpu = os.environ.get("VGGT_ALLOW_CPU", "0") in {"1", "true", "True"}
@@ -226,3 +227,14 @@ def _env_int(name: str, default: int) -> int:
         return max(1, int(value))
     except ValueError:
         return default
+
+
+def _configure_torch_threads(torch: Any) -> None:
+    try:
+        torch.set_num_threads(_env_int("TORCH_NUM_THREADS", 4))
+    except Exception:
+        pass
+    try:
+        torch.set_num_interop_threads(_env_int("TORCH_NUM_INTEROP_THREADS", 1))
+    except Exception:
+        pass
