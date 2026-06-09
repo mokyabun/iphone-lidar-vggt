@@ -23,10 +23,8 @@ _RECONSTRUCTION_LOCK = threading.Lock()
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if _env_bool("VGGT_PRELOAD", False):
-        try:
-            print(f"[startup] {preload_vggt()}", flush=True)
-        except Exception as exc:  # noqa: BLE001 - keep API up so LiDAR-only still works.
-            print(f"[startup] VGGT preload failed: {exc}", flush=True)
+        thread = threading.Thread(target=_preload_vggt_background, name="vggt-preload", daemon=True)
+        thread.start()
     yield
 
 
@@ -177,3 +175,11 @@ def _run_reconstruction(
         flush=True,
     )
     return metrics
+
+
+def _preload_vggt_background() -> None:
+    try:
+        print("[startup] VGGT preload started in background", flush=True)
+        print(f"[startup] {preload_vggt()}", flush=True)
+    except Exception as exc:  # noqa: BLE001 - keep API up so LiDAR-only still works.
+        print(f"[startup] VGGT preload failed: {exc}", flush=True)

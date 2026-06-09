@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,7 @@ class _VGGTRuntime:
 
 
 _RUNTIME_CACHE: _VGGTRuntime | None = None
+_RUNTIME_LOCK = threading.Lock()
 
 
 def preload_vggt() -> str:
@@ -127,42 +129,46 @@ def _load_vggt_runtime() -> _VGGTRuntime:
     if _RUNTIME_CACHE is not None:
         return _RUNTIME_CACHE
 
-    configure_huggingface_cache()
-    ensure_vggt_repo()
-    try:
-        import torch
-        from vggt.models.vggt import VGGT
-        from vggt.utils.geometry import unproject_depth_map_to_point_map
-        from vggt.utils.load_fn import load_and_preprocess_images
-        from vggt.utils.pose_enc import pose_encoding_to_extri_intri
-    except Exception as exc:  # noqa: BLE001 - report missing optional stack clearly.
-        raise RuntimeError(f"VGGT Python imports failed: {exc}") from exc
+    with _RUNTIME_LOCK:
+        if _RUNTIME_CACHE is not None:
+            return _RUNTIME_CACHE
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    if device == "cpu":
-        allow_cpu = os.environ.get("VGGT_ALLOW_CPU", "0") in {"1", "true", "True"}
-        if not allow_cpu:
-            raise RuntimeError("VGGT direct adapter requires CUDA; set VGGT_ALLOW_CPU=1 only for slow development tests")
+        configure_huggingface_cache()
+        ensure_vggt_repo()
+        try:
+            import torch
+            from vggt.models.vggt import VGGT
+            from vggt.utils.geometry import unproject_depth_map_to_point_map
+            from vggt.utils.load_fn import load_and_preprocess_images
+            from vggt.utils.pose_enc import pose_encoding_to_extri_intri
+        except Exception as exc:  # noqa: BLE001 - report missing optional stack clearly.
+            raise RuntimeError(f"VGGT Python imports failed: {exc}") from exc
 
-    if device == "cuda":
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        if device == "cpu":
+            allow_cpu = os.environ.get("VGGT_ALLOW_CPU", "0") in {"1", "true", "True"}
+            if not allow_cpu:
+                raise RuntimeError("VGGT direct adapter requires CUDA; set VGGT_ALLOW_CPU=1 only for slow development tests")
 
-    dtype = torch.float32
-    if device == "cuda":
-        is_bf16_supported = getattr(torch.cuda, "is_bf16_supported", lambda: False)
-        dtype = torch.bfloat16 if is_bf16_supported() else torch.float16
-    model = VGGT.from_pretrained("facebook/VGGT-1B").to(device).eval()
-    _RUNTIME_CACHE = _VGGTRuntime(
-        torch=torch,
-        model=model,
-        load_and_preprocess_images=load_and_preprocess_images,
-        pose_encoding_to_extri_intri=pose_encoding_to_extri_intri,
-        unproject_depth_map_to_point_map=unproject_depth_map_to_point_map,
-        device=device,
-        dtype=dtype,
-    )
-    return _RUNTIME_CACHE
+        if device == "cuda":
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+
+        dtype = torch.float32
+        if device == "cuda":
+            is_bf16_supported = getattr(torch.cuda, "is_bf16_supported", lambda: False)
+            dtype = torch.bfloat16 if is_bf16_supported() else torch.float16
+        model = VGGT.from_pretrained("facebook/VGGT-1B").to(device).eval()
+        _RUNTIME_CACHE = _VGGTRuntime(
+            torch=torch,
+            model=model,
+            load_and_preprocess_images=load_and_preprocess_images,
+            pose_encoding_to_extri_intri=pose_encoding_to_extri_intri,
+            unproject_depth_map_to_point_map=unproject_depth_map_to_point_map,
+            device=device,
+            dtype=dtype,
+        )
+        return _RUNTIME_CACHE
 
 
 def _limit_vggt_frames(frames: list[FrameRecord]) -> list[FrameRecord]:
