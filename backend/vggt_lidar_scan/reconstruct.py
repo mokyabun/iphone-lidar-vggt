@@ -94,35 +94,52 @@ def try_open3d_tsdf(root: Path, frames: list[FrameRecord], output_dir: Path, war
         warnings.append("Open3D is not installed; wrote point-cloud baseline only.")
         return None
 
-    volume = o3d.pipelines.integration.ScalableTSDFVolume(
-        voxel_length=0.015,
-        sdf_trunc=0.06,
-        color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8,
-    )
-
-    for frame in frames:
-        depth_np = read_depth(root, frame)
-        image_np = np.asarray(read_image(root, frame))
-        color = o3d.geometry.Image(image_np)
-        depth = o3d.geometry.Image(depth_np.astype(np.float32))
-        rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
-            color,
-            depth,
-            depth_scale=1.0,
-            depth_trunc=8.0,
-            convert_rgb_to_intensity=False,
+    try:
+        volume = o3d.pipelines.integration.ScalableTSDFVolume(
+            voxel_length=0.015,
+            sdf_trunc=0.06,
+            color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8,
         )
-        k = np.asarray(frame.intrinsics_depth, dtype=np.float64)
-        intrinsic = o3d.camera.PinholeCameraIntrinsic(frame.depth_width, frame.depth_height, k[0, 0], k[1, 1], k[0, 2], k[1, 2])
-        camera_to_world = np.asarray(frame.camera_to_world, dtype=np.float64)
-        world_to_camera = np.linalg.inv(camera_to_world)
-        volume.integrate(rgbd, intrinsic, world_to_camera)
 
-    mesh = volume.extract_triangle_mesh()
-    mesh.compute_vertex_normals()
-    output = output_dir / "scan_lidar_tsdf.ply"
-    if not o3d.io.write_triangle_mesh(str(output), mesh):
-        warnings.append("Open3D TSDF mesh export failed.")
+        for frame in frames:
+            depth_np = read_depth(root, frame)
+            image_np = np.asarray(read_image(root, frame))
+            if image_np.shape[:2] != depth_np.shape:
+                image_np = _resize_rgb_to_depth(image_np, frame.depth_width, frame.depth_height)
+            color = o3d.geometry.Image(image_np)
+            depth = o3d.geometry.Image(depth_np.astype(np.float32))
+            rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
+                color,
+                depth,
+                depth_scale=1.0,
+                depth_trunc=8.0,
+                convert_rgb_to_intensity=False,
+            )
+            k = np.asarray(frame.intrinsics_depth, dtype=np.float64)
+            intrinsic = o3d.camera.PinholeCameraIntrinsic(frame.depth_width, frame.depth_height, k[0, 0], k[1, 1], k[0, 2], k[1, 2])
+            camera_to_world = np.asarray(frame.camera_to_world, dtype=np.float64)
+            world_to_camera = np.linalg.inv(camera_to_world)
+            volume.integrate(rgbd, intrinsic, world_to_camera)
+
+        mesh = volume.extract_triangle_mesh()
+        mesh.compute_vertex_normals()
+        output = output_dir / "scan_lidar_tsdf.ply"
+        if not o3d.io.write_triangle_mesh(str(output), mesh):
+            warnings.append("Open3D TSDF mesh export failed; wrote point-cloud baseline only.")
+            return None
+    except Exception as exc:  # noqa: BLE001 - TSDF is a best-effort refinement path.
+        warnings.append(f"Open3D TSDF skipped: {exc}")
         return None
     return output
 
+
+def _resize_rgb_to_depth(image_rgb: np.ndarray, depth_width: int, depth_height: int) -> np.ndarray:
+    try:
+        from PIL import Image
+
+        resampling = getattr(Image, "Resampling", Image).BILINEAR
+        return np.asarray(Image.fromarray(image_rgb).resize((depth_width, depth_height), resampling)).astype(np.uint8)
+    except Exception:
+        y_idx = np.linspace(0, image_rgb.shape[0] - 1, depth_height).round().astype(np.int32)
+        x_idx = np.linspace(0, image_rgb.shape[1] - 1, depth_width).round().astype(np.int32)
+        return image_rgb[y_idx[:, None], x_idx[None, :]].astype(np.uint8)

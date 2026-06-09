@@ -23,6 +23,14 @@ struct ContentView: View {
                     statusPill("\(scanner.capturedFrameCount) frames")
                 }
 
+                if let errorText = scanner.lastErrorText {
+                    Text(errorText)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .lineLimit(3)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
                 HStack(spacing: 12) {
                     Button {
                         scanner.isRecording ? scanner.stopScan() : scanner.startScan()

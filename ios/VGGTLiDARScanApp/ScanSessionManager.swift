@@ -13,6 +13,7 @@ final class ScanSessionManager: NSObject, ObservableObject {
     @Published private(set) var lastPackageURL: URL?
     @Published private(set) var resultURL: URL?
     @Published private(set) var isUploading = false
+    @Published private(set) var lastErrorText: String?
 
     private let exporter = ScanPackageExporter()
     private let captureQueue = DispatchQueue(label: "edu.ssu.vggt-lidar.capture")
@@ -60,11 +61,13 @@ final class ScanSessionManager: NSObject, ObservableObject {
             capturedFrameCount = 0
             lastPackageURL = nil
             resultURL = nil
+            lastErrorText = nil
             lastCaptureTimestamp = 0
             isRecording = true
             statusText = "Scanning"
         } catch {
             statusText = "Export setup failed"
+            lastErrorText = error.localizedDescription
         }
     }
 
@@ -79,10 +82,12 @@ final class ScanSessionManager: NSObject, ObservableObject {
                 DispatchQueue.main.async {
                     self.lastPackageURL = url
                     self.statusText = "Package ready"
+                    self.lastErrorText = nil
                 }
             } catch {
                 DispatchQueue.main.async {
                     self.statusText = "Package failed"
+                    self.lastErrorText = error.localizedDescription
                 }
             }
         }
@@ -104,6 +109,7 @@ final class ScanSessionManager: NSObject, ObservableObject {
             statusText = "Result ready"
         } catch {
             statusText = "Backend failed"
+            lastErrorText = error.localizedDescription
         }
         isUploading = false
     }
@@ -118,8 +124,15 @@ extension ScanSessionManager: ARSessionDelegate {
             let nextIndex = capturedFrameCount + 1
             capturedFrameCount = nextIndex
 
-            captureQueue.async { [exporter] in
-                try? exporter.append(frame: frame, index: nextIndex)
+            captureQueue.async { [weak self, exporter] in
+                do {
+                    try exporter.append(frame: frame, index: nextIndex)
+                } catch {
+                    DispatchQueue.main.async {
+                        self?.statusText = "Frame skipped"
+                        self?.lastErrorText = error.localizedDescription
+                    }
+                }
             }
         }
     }

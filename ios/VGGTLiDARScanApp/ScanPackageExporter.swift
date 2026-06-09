@@ -13,9 +13,11 @@ final class ScanPackageExporter {
     private var rootURL: URL?
     private var framesFileHandle: FileHandle?
     private let ciContext = CIContext()
+    private var writtenFrameCount = 0
 
     func beginScan(lidarSupported: Bool) throws {
         closeFramesFile()
+        writtenFrameCount = 0
         let base = FileManager.default.temporaryDirectory
             .appendingPathComponent("ScanPackage-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: base.appendingPathComponent("images", isDirectory: true), withIntermediateDirectories: true)
@@ -77,12 +79,16 @@ final class ScanPackageExporter {
         var line = try encoder.encode(record)
         line.append(0x0a)
         framesFileHandle.write(line)
+        writtenFrameCount += 1
     }
 
     func finishScan() throws -> URL {
         closeFramesFile()
         guard let rootURL else {
             throw CocoaError(.fileNoSuchFile)
+        }
+        guard writtenFrameCount > 0 else {
+            throw ScanPackageExportError.noFramesWritten
         }
         let zipURL = rootURL.deletingLastPathComponent().appendingPathComponent("ScanPackage-\(UUID().uuidString).zip")
         try ZipWriter.zipDirectory(rootURL, to: zipURL)
@@ -147,6 +153,17 @@ final class ScanPackageExporter {
             data.append(contentsOf: UnsafeBufferPointer(start: rowPointer, count: width))
         }
         try data.write(to: url, options: .atomic)
+    }
+}
+
+enum ScanPackageExportError: LocalizedError {
+    case noFramesWritten
+
+    var errorDescription: String? {
+        switch self {
+        case .noFramesWritten:
+            return "No LiDAR frames were written. Scan a little longer and keep the device pointed at a textured surface."
+        }
     }
 }
 
