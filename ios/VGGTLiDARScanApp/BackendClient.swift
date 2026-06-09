@@ -3,7 +3,7 @@ import Foundation
 struct BackendClient {
     let baseURL: URL
 
-    func reconstruct(packageURL: URL, runVGGT: Bool) async throws -> URL {
+    func reconstruct(packageURL: URL, runVGGT: Bool) async throws -> BackendReconstructionResult {
         var components = URLComponents(url: baseURL.appendingPathComponent("reconstruct"), resolvingAgainstBaseURL: false)
         components?.queryItems = [URLQueryItem(name: "run_vggt", value: runVGGT ? "true" : "false")]
         guard let url = components?.url else {
@@ -31,8 +31,24 @@ struct BackendClient {
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("scan_final-\(UUID().uuidString).ply")
         try data.write(to: outputURL, options: .atomic)
-        return outputURL
+        let metrics = httpResponse.value(forHTTPHeaderField: "X-Reconstruction-Metrics")
+            .flatMap { $0.data(using: .utf8) }
+            .flatMap { try? JSONDecoder.scanBackend.decode(BackendMetrics.self, from: $0) }
+        return BackendReconstructionResult(outputURL: outputURL, metrics: metrics)
     }
+}
+
+struct BackendReconstructionResult {
+    let outputURL: URL
+    let metrics: BackendMetrics?
+}
+
+struct BackendMetrics: Decodable {
+    let frameCount: Int
+    let selectedKeyframes: Int
+    let lidarPoints: Int
+    let vggtPoints: Int
+    let warnings: [String]
 }
 
 enum BackendError: LocalizedError {
@@ -52,3 +68,10 @@ private extension Data {
     }
 }
 
+private extension JSONDecoder {
+    static var scanBackend: JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return decoder
+    }
+}

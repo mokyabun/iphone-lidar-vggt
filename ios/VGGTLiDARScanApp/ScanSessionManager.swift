@@ -75,10 +75,11 @@ final class ScanSessionManager: NSObject, ObservableObject {
         guard isRecording else { return }
         isRecording = false
         statusText = "Packaging"
-        captureQueue.async { [weak self] in
+        let exporter = exporter
+        captureQueue.async { [weak self, exporter] in
             guard let self else { return }
             do {
-                let url = try self.exporter.finishScan()
+                let url = try exporter.finishScan()
                 DispatchQueue.main.async {
                     self.lastPackageURL = url
                     self.statusText = "Package ready"
@@ -102,11 +103,19 @@ final class ScanSessionManager: NSObject, ObservableObject {
 
         isUploading = true
         statusText = "Uploading"
+        lastErrorText = nil
         do {
             let client = BackendClient(baseURL: baseURL)
-            let outputURL = try await client.reconstruct(packageURL: lastPackageURL, runVGGT: runVGGT)
-            resultURL = outputURL
-            statusText = "Result ready"
+            let result = try await client.reconstruct(packageURL: lastPackageURL, runVGGT: runVGGT)
+            resultURL = result.outputURL
+            if runVGGT, let metrics = result.metrics, metrics.vggtPoints > 0 {
+                statusText = "VGGT ready"
+            } else {
+                statusText = "Result ready"
+            }
+            if let warnings = result.metrics?.warnings, !warnings.isEmpty {
+                lastErrorText = warnings.joined(separator: "\n")
+            }
         } catch {
             statusText = "Backend failed"
             lastErrorText = error.localizedDescription

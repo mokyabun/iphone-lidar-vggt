@@ -3,7 +3,7 @@ import CoreImage
 import Foundation
 import UIKit
 
-final class ScanPackageExporter {
+final class ScanPackageExporter: @unchecked Sendable {
     private let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]

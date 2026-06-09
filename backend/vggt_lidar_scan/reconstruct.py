@@ -42,7 +42,7 @@ def reconstruct_scan(
                 warnings.append(f"VGGT stage skipped: {exc}")
 
         final_output = output_dir / "scan_final.ply"
-        shutil.copyfile(tsdf_output or lidar_output, final_output)
+        shutil.copyfile(vggt_output or tsdf_output or lidar_output, final_output)
 
     metrics = ReconstructionMetrics(
         frame_count=len(frames),
@@ -124,7 +124,7 @@ def try_open3d_tsdf(root: Path, frames: list[FrameRecord], output_dir: Path, war
         mesh = volume.extract_triangle_mesh()
         mesh.compute_vertex_normals()
         output = output_dir / "scan_lidar_tsdf.ply"
-        if not o3d.io.write_triangle_mesh(str(output), mesh):
+        if not o3d.io.write_triangle_mesh(str(output), mesh, write_ascii=True):
             warnings.append("Open3D TSDF mesh export failed; wrote point-cloud baseline only.")
             return None
     except Exception as exc:  # noqa: BLE001 - TSDF is a best-effort refinement path.

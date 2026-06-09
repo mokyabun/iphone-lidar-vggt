@@ -88,31 +88,66 @@ enum PLYParser {
             throw CocoaError(.fileReadCorruptFile)
         }
 
-        let vertexCount = lines[..<endHeaderIndex]
+        let header = lines[..<endHeaderIndex].map(String.init)
+        guard header.contains(where: { $0 == "format ascii 1.0" }) else {
+            throw CocoaError(.fileReadUnsupportedScheme)
+        }
+
+        let vertexCount = header
             .first(where: { $0.hasPrefix("element vertex ") })?
             .split(separator: " ")
             .last
             .flatMap { Int($0) } ?? 0
+        let properties = vertexProperties(from: header)
+        guard let xIndex = properties.firstIndex(of: "x"),
+              let yIndex = properties.firstIndex(of: "y"),
+              let zIndex = properties.firstIndex(of: "z") else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        let redIndex = properties.firstIndex(of: "red")
+        let greenIndex = properties.firstIndex(of: "green")
+        let blueIndex = properties.firstIndex(of: "blue")
 
         let step = max(1, vertexCount / maxPoints)
         var parsed: [PLYPoint] = []
         parsed.reserveCapacity(min(vertexCount, maxPoints))
 
-        for (index, line) in lines[(endHeaderIndex + 1)...].enumerated() {
+        for (index, line) in lines[(endHeaderIndex + 1)...].prefix(vertexCount).enumerated() {
             guard index % step == 0, parsed.count < maxPoints else { continue }
             let values = line.split(separator: " ")
-            guard values.count >= 6,
-                  let x = Float(values[0]),
-                  let y = Float(values[1]),
-                  let z = Float(values[2]),
-                  let red = Float(values[3]),
-                  let green = Float(values[4]),
-                  let blue = Float(values[5]) else {
+            guard values.count >= properties.count,
+                  let x = Float(values[xIndex]),
+                  let y = Float(values[yIndex]),
+                  let z = Float(values[zIndex]) else {
                 continue
             }
+            let red = redIndex.flatMap { Float(values[$0]) } ?? 220
+            let green = greenIndex.flatMap { Float(values[$0]) } ?? 220
+            let blue = blueIndex.flatMap { Float(values[$0]) } ?? 220
             parsed.append(PLYPoint(x: x, y: y, z: z, red: red / 255, green: green / 255, blue: blue / 255))
         }
         return parsed
+    }
+
+    private static func vertexProperties(from header: [String]) -> [String] {
+        var properties: [String] = []
+        var readingVertex = false
+        for line in header {
+            if line.hasPrefix("element vertex ") {
+                readingVertex = true
+                continue
+            }
+            if line.hasPrefix("element ") {
+                readingVertex = false
+            }
+            if readingVertex, line.hasPrefix("property ") {
+                let parts = line.split(separator: " ")
+                if let name = parts.last {
+                    properties.append(String(name))
+                }
+            }
+        }
+        return properties
     }
 }
 

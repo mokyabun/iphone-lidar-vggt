@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var scanner = ScanSessionManager()
     @AppStorage("backendBaseURL") private var backendBaseURL = "http://127.0.0.1:8000"
+    @AppStorage("runVGGT") private var runVGGT = true
     @State private var showResult = false
 
     var body: some View {
@@ -22,6 +23,12 @@ struct ContentView: View {
                     Spacer()
                     statusPill("\(scanner.capturedFrameCount) frames")
                 }
+
+                Toggle(isOn: $runVGGT) {
+                    Label("VGGT", systemImage: "sparkles")
+                }
+                .toggleStyle(.switch)
+                .tint(.purple)
 
                 if let errorText = scanner.lastErrorText {
                     Text(errorText)
@@ -45,7 +52,7 @@ struct ContentView: View {
                     if let packageURL = scanner.lastPackageURL {
                         Button {
                             Task {
-                                await scanner.uploadLatestPackage(backendBaseURL: backendBaseURL, runVGGT: false)
+                                await scanner.uploadLatestPackage(backendBaseURL: backendBaseURL, runVGGT: runVGGT)
                                 showResult = scanner.resultURL != nil
                             }
                         } label: {
