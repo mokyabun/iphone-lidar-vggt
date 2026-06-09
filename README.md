@@ -135,9 +135,20 @@ APP_DIR=/workspace/iphone-lidar-vggt
 APP_UPDATE_MODE=reset
 APP_PREPARE_VGGT=1
 APP_PREFETCH_VGGT=0
+VGGT_MAX_IMAGES=12
+VGGT_PRELOAD=1
+SCAN_MAX_FRAMES=24
+SCAN_RUN_TSDF=0
 ```
 
 `APP_PREPARE_VGGT=1` clones `facebookresearch/vggt` and installs it as an editable Python package. It does not pre-download the model checkpoint unless `APP_PREFETCH_VGGT=1` is also set.
+
+Performance knobs:
+
+- `VGGT_MAX_IMAGES=12` limits VGGT input keyframes. Increase for quality, decrease for speed.
+- `VGGT_PRELOAD=1` loads the VGGT model when the API starts, so the first reconstruction request does not pay the model-load cost.
+- `SCAN_MAX_FRAMES=24` limits LiDAR baseline frames.
+- `SCAN_RUN_TSDF=0` skips the slower Open3D TSDF mesh stage. Set to `1` only when you specifically want TSDF output.
 
 For a private fork or different account, set `APP_REPO_URL` in the RunPod template environment variables and keep the start command pointed at that repo's raw `run.sh`.
 

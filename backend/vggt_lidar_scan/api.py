@@ -1,18 +1,33 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import AsyncIterator
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from .reconstruct import reconstruct_scan
+from .vggt_adapter import preload_vggt
 
 RUN_ROOT = Path("runs/api")
 
-app = FastAPI(title="VGGT iPhone LiDAR Scanner API")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    if _env_bool("VGGT_PRELOAD", False):
+        try:
+            print(f"[startup] {preload_vggt()}", flush=True)
+        except Exception as exc:  # noqa: BLE001 - keep API up so LiDAR-only still works.
+            print(f"[startup] VGGT preload failed: {exc}", flush=True)
+    yield
+
+
+app = FastAPI(title="VGGT iPhone LiDAR Scanner API", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -87,3 +102,10 @@ def get_result(job_id: str) -> FileResponse:
     if not result.exists():
         raise HTTPException(status_code=404, detail="Result not found")
     return FileResponse(result, filename="scan_final.ply")
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value not in {"0", "false", "False", "no", "No"}

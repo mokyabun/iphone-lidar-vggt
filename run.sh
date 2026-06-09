@@ -19,6 +19,11 @@ export UV_LINK_MODE="${UV_LINK_MODE:-copy}"
 export VGGT_AUTO_DOWNLOAD="${VGGT_AUTO_DOWNLOAD:-1}"
 export VGGT_CACHE_ROOT="${VGGT_CACHE_ROOT:-/workspace/cache/vggt-lidar}"
 export HF_HOME="${HF_HOME:-/workspace/cache/vggt-lidar/huggingface}"
+export SCAN_MAX_FRAMES="${SCAN_MAX_FRAMES:-24}"
+export SCAN_STRIDE="${SCAN_STRIDE:-4}"
+export SCAN_RUN_TSDF="${SCAN_RUN_TSDF:-0}"
+export VGGT_MAX_IMAGES="${VGGT_MAX_IMAGES:-12}"
+export VGGT_PRELOAD="${VGGT_PRELOAD:-1}"
 
 log() {
   printf '[run.sh] %s\n' "$*"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 
@@ -20,6 +21,8 @@ def reconstruct_scan(
     confidence_minimum: int = 1,
     run_vggt_stage: bool = False,
 ) -> ReconstructionMetrics:
+    max_frames = _env_int("SCAN_MAX_FRAMES", max_frames)
+    stride = _env_int("SCAN_STRIDE", stride)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     warnings: list[str] = []
@@ -32,7 +35,7 @@ def reconstruct_scan(
         lidar_output = output_dir / "scan_lidar_points.ply"
         write_point_cloud_ply(lidar_output, points, colors)
 
-        tsdf_output = try_open3d_tsdf(root, selected, output_dir, warnings)
+        tsdf_output = try_open3d_tsdf(root, selected, output_dir, warnings) if _env_bool("SCAN_RUN_TSDF", False) else None
         vggt_output: Path | None = None
         vggt_points = 0
         if run_vggt_stage:
@@ -143,3 +146,20 @@ def _resize_rgb_to_depth(image_rgb: np.ndarray, depth_width: int, depth_height: 
         y_idx = np.linspace(0, image_rgb.shape[0] - 1, depth_height).round().astype(np.int32)
         x_idx = np.linspace(0, image_rgb.shape[1] - 1, depth_width).round().astype(np.int32)
         return image_rgb[y_idx[:, None], x_idx[None, :]].astype(np.uint8)
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value not in {"0", "false", "False", "no", "No"}
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    if not value:
+        return default
+    try:
+        return max(1, int(value))
+    except ValueError:
+        return default

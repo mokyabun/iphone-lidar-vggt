@@ -3,17 +3,40 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
+from .geometry import keyframe_indices
 from .io import read_image
 from .models import FrameRecord
 from .ply import write_point_cloud_ply
 from .vggt_manager import configure_huggingface_cache, ensure_vggt_repo
 
 
+@dataclass
+class _VGGTRuntime:
+    torch: Any
+    model: Any
+    load_and_preprocess_images: Any
+    pose_encoding_to_extri_intri: Any
+    unproject_depth_map_to_point_map: Any
+    device: str
+    dtype: Any
+
+
+_RUNTIME_CACHE: _VGGTRuntime | None = None
+
+
+def preload_vggt() -> str:
+    runtime = _load_vggt_runtime()
+    return f"VGGT loaded on {runtime.device} with dtype {runtime.dtype}"
+
+
 def run_vggt(root: Path, frames: list[FrameRecord], output_dir: Path) -> tuple[Path, int]:
+    frames = _limit_vggt_frames(frames)
     image_dir = output_dir / "vggt_scene" / "images"
     image_dir.mkdir(parents=True, exist_ok=True)
 
@@ -47,40 +70,21 @@ def _run_external_vggt(runner: str, image_dir: Path, output_dir: Path) -> tuple[
 
 
 def _run_python_vggt(image_paths: list[Path], output_dir: Path) -> tuple[Path, int]:
-    configure_huggingface_cache()
-    ensure_vggt_repo()
-    try:
-        import torch
-        from vggt.models.vggt import VGGT
-        from vggt.utils.geometry import unproject_depth_map_to_point_map
-        from vggt.utils.load_fn import load_and_preprocess_images
-        from vggt.utils.pose_enc import pose_encoding_to_extri_intri
-    except Exception as exc:  # noqa: BLE001 - report missing optional stack clearly.
-        raise RuntimeError(f"VGGT Python imports failed: {exc}") from exc
+    runtime = _load_vggt_runtime()
+    torch = runtime.torch
 
     if not image_paths:
         raise RuntimeError("No keyframe images available for VGGT")
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    if device == "cpu":
-        allow_cpu = os.environ.get("VGGT_ALLOW_CPU", "0") in {"1", "true", "True"}
-        if not allow_cpu:
-            raise RuntimeError("VGGT direct adapter requires CUDA; set VGGT_ALLOW_CPU=1 only for slow development tests")
+    images = runtime.load_and_preprocess_images([str(path) for path in image_paths]).to(runtime.device, non_blocking=True)[None]
 
-    dtype = torch.float32
-    if device == "cuda":
-        dtype = torch.bfloat16 if torch.cuda.get_device_capability()[0] >= 8 else torch.float16
-    model = VGGT.from_pretrained("facebook/VGGT-1B").to(device).eval()
-    images = load_and_preprocess_images([str(path) for path in image_paths]).to(device)[None]
-
-    with torch.no_grad():
-        autocast_device = "cuda" if device == "cuda" else "cpu"
-        with torch.amp.autocast(autocast_device, dtype=dtype, enabled=device == "cuda"):
-            aggregated_tokens_list, ps_idx = model.aggregator(images)
-            pose_enc = model.camera_head(aggregated_tokens_list)[-1]
-            extrinsic, intrinsic = pose_encoding_to_extri_intri(pose_enc, images.shape[-2:])
-            depth_map, depth_conf = model.depth_head(aggregated_tokens_list, images, ps_idx)
-            point_map = unproject_depth_map_to_point_map(depth_map.squeeze(0), extrinsic.squeeze(0), intrinsic.squeeze(0))
+    with torch.inference_mode():
+        with torch.amp.autocast(runtime.device, dtype=runtime.dtype, enabled=runtime.device == "cuda"):
+            aggregated_tokens_list, ps_idx = runtime.model.aggregator(images)
+            pose_enc = runtime.model.camera_head(aggregated_tokens_list)[-1]
+            extrinsic, intrinsic = runtime.pose_encoding_to_extri_intri(pose_enc, images.shape[-2:])
+            depth_map, depth_conf = runtime.model.depth_head(aggregated_tokens_list, images, ps_idx)
+            point_map = runtime.unproject_depth_map_to_point_map(depth_map.squeeze(0), extrinsic.squeeze(0), intrinsic.squeeze(0))
 
     points = _as_numpy(point_map).reshape(-1, 3)
     confidence = _as_numpy(depth_conf).reshape(-1)
@@ -94,6 +98,56 @@ def _run_python_vggt(image_paths: list[Path], output_dir: Path) -> tuple[Path, i
     output = output_dir / "scan_vggt_points.ply"
     write_point_cloud_ply(output, points)
     return output, int(points.shape[0])
+
+
+def _load_vggt_runtime() -> _VGGTRuntime:
+    global _RUNTIME_CACHE
+    if _RUNTIME_CACHE is not None:
+        return _RUNTIME_CACHE
+
+    configure_huggingface_cache()
+    ensure_vggt_repo()
+    try:
+        import torch
+        from vggt.models.vggt import VGGT
+        from vggt.utils.geometry import unproject_depth_map_to_point_map
+        from vggt.utils.load_fn import load_and_preprocess_images
+        from vggt.utils.pose_enc import pose_encoding_to_extri_intri
+    except Exception as exc:  # noqa: BLE001 - report missing optional stack clearly.
+        raise RuntimeError(f"VGGT Python imports failed: {exc}") from exc
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if device == "cpu":
+        allow_cpu = os.environ.get("VGGT_ALLOW_CPU", "0") in {"1", "true", "True"}
+        if not allow_cpu:
+            raise RuntimeError("VGGT direct adapter requires CUDA; set VGGT_ALLOW_CPU=1 only for slow development tests")
+
+    if device == "cuda":
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+
+    dtype = torch.float32
+    if device == "cuda":
+        is_bf16_supported = getattr(torch.cuda, "is_bf16_supported", lambda: False)
+        dtype = torch.bfloat16 if is_bf16_supported() else torch.float16
+    model = VGGT.from_pretrained("facebook/VGGT-1B").to(device).eval()
+    _RUNTIME_CACHE = _VGGTRuntime(
+        torch=torch,
+        model=model,
+        load_and_preprocess_images=load_and_preprocess_images,
+        pose_encoding_to_extri_intri=pose_encoding_to_extri_intri,
+        unproject_depth_map_to_point_map=unproject_depth_map_to_point_map,
+        device=device,
+        dtype=dtype,
+    )
+    return _RUNTIME_CACHE
+
+
+def _limit_vggt_frames(frames: list[FrameRecord]) -> list[FrameRecord]:
+    max_images = _env_int("VGGT_MAX_IMAGES", 12)
+    if len(frames) <= max_images:
+        return frames
+    return [frames[index] for index in keyframe_indices(len(frames), max_images)]
 
 
 def _count_ply_vertices(path: Path) -> int:
@@ -113,3 +167,13 @@ def _as_numpy(value: object) -> np.ndarray:
     if hasattr(value, "numpy"):
         return value.numpy()
     return np.asarray(value)
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    if not value:
+        return default
+    try:
+        return max(1, int(value))
+    except ValueError:
+        return default

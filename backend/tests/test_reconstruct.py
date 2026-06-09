@@ -44,6 +44,7 @@ def test_reconstruct_scan_writes_final_ply(tmp_path: Path) -> None:
 
 
 def test_reconstruct_scan_falls_back_when_open3d_tsdf_fails(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("SCAN_RUN_TSDF", "1")
     package = tmp_path / "package"
     (package / "images").mkdir(parents=True)
     (package / "depth").mkdir()
