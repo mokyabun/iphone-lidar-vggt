@@ -24,6 +24,7 @@ struct BackendClient {
         let boundary = "Boundary-\(UUID().uuidString)"
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        request.timeoutInterval = 600
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 
         var body = Data()
@@ -33,7 +34,11 @@ struct BackendClient {
         body.append(try Data(contentsOf: packageURL))
         body.appendString("\r\n--\(boundary)--\r\n")
 
-        let (data, response) = try await URLSession.shared.upload(for: request, from: body)
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = 600
+        configuration.timeoutIntervalForResource = 900
+        let session = URLSession(configuration: configuration)
+        let (data, response) = try await session.upload(for: request, from: body)
         guard let httpResponse = response as? HTTPURLResponse, (200..<300).contains(httpResponse.statusCode) else {
             let message = String(data: data, encoding: .utf8) ?? "Backend request failed"
             throw BackendError.requestFailed(message)
