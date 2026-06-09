@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .geometry import apply_confidence_mask, colors_for_depth_pixels, keyframe_indices, unproject_depth
+from .geometry import apply_confidence_mask, camera_to_world_for_depth, colors_for_depth_pixels, keyframe_indices, unproject_depth
 from .io import open_scan_package, read_confidence, read_depth, read_frames, read_image, write_json
 from .models import FrameRecord, ReconstructionMetrics
 from .ply import count_ply_elements, write_point_cloud_ply
@@ -42,6 +42,7 @@ def reconstruct_scan(
         )
         object_masks = build_object_masks(root, selected) if extract_object else None
         points, colors = build_lidar_point_cloud(root, selected, stride, confidence_minimum, preserve_color, object_masks)
+        lidar_points_all = build_lidar_point_cloud(root, selected, stride, confidence_minimum, preserve_color, None)[0] if extract_object else points
 
         lidar_output = output_dir / "scan_lidar_points.ply"
         write_point_cloud_ply(lidar_output, points, colors)
@@ -64,6 +65,8 @@ def reconstruct_scan(
             mesh_vertices, mesh_faces = count_ply_elements(final_source)
         shutil.copyfile(final_source, final_output)
 
+    lidar_bounds = _bounds(lidar_points_all)
+    object_bounds = _bounds(points) if extract_object else (None, None, None)
     metrics = ReconstructionMetrics(
         frame_count=len(frames),
         selected_keyframes=len(selected),
@@ -73,6 +76,14 @@ def reconstruct_scan(
         mesh_faces=mesh_faces,
         final_output_type="mesh" if mesh_faces else "point_cloud",
         object_mask_backend=object_mask_backend,
+        camera_path_m=_camera_path_m(frames),
+        camera_extent_m=_camera_extent_m(frames),
+        lidar_bounds_min_m=lidar_bounds[0],
+        lidar_bounds_max_m=lidar_bounds[1],
+        lidar_extent_m=lidar_bounds[2],
+        object_bounds_min_m=object_bounds[0],
+        object_bounds_max_m=object_bounds[1],
+        object_extent_m=object_bounds[2],
         final_output=str(final_output),
         lidar_output=str(lidar_output),
         tsdf_output=str(tsdf_output) if tsdf_output else None,
@@ -178,7 +189,7 @@ def try_open3d_tsdf(
             )
             k = np.asarray(frame.intrinsics_depth, dtype=np.float64)
             intrinsic = o3d.camera.PinholeCameraIntrinsic(frame.depth_width, frame.depth_height, k[0, 0], k[1, 1], k[0, 2], k[1, 2])
-            camera_to_world = np.asarray(frame.camera_to_world, dtype=np.float64)
+            camera_to_world = camera_to_world_for_depth(np.asarray(frame.camera_to_world, dtype=np.float64)).astype(np.float64)
             world_to_camera = np.linalg.inv(camera_to_world)
             volume.integrate(rgbd, intrinsic, world_to_camera)
 
@@ -256,3 +267,39 @@ def _postprocess_open3d_mesh(mesh, o3d):  # noqa: ANN001, ANN201 - Open3D runtim
         mesh = mesh.simplify_quadric_decimation(target_number_of_triangles=target_triangles)
     mesh.compute_vertex_normals()
     return mesh
+
+
+def _bounds(points: np.ndarray) -> tuple[list[float] | None, list[float] | None, list[float] | None]:
+    if points.size == 0:
+        return None, None, None
+    finite = points[np.isfinite(points).all(axis=1)]
+    if finite.size == 0:
+        return None, None, None
+    lower = np.percentile(finite, 1, axis=0)
+    upper = np.percentile(finite, 99, axis=0)
+    extent = upper - lower
+    return _round_vector(lower), _round_vector(upper), _round_vector(extent)
+
+
+def _camera_positions(frames: list[FrameRecord]) -> np.ndarray:
+    if not frames:
+        return np.empty((0, 3), dtype=np.float32)
+    return np.asarray([np.asarray(frame.camera_to_world, dtype=np.float32)[:3, 3] for frame in frames], dtype=np.float32)
+
+
+def _camera_path_m(frames: list[FrameRecord]) -> float | None:
+    positions = _camera_positions(frames)
+    if positions.shape[0] < 2:
+        return 0.0 if positions.shape[0] == 1 else None
+    return round(float(np.linalg.norm(np.diff(positions, axis=0), axis=1).sum()), 4)
+
+
+def _camera_extent_m(frames: list[FrameRecord]) -> list[float] | None:
+    positions = _camera_positions(frames)
+    if positions.size == 0:
+        return None
+    return _round_vector(np.ptp(positions, axis=0))
+
+
+def _round_vector(values: np.ndarray) -> list[float]:
+    return [round(float(value), 4) for value in values.tolist()]

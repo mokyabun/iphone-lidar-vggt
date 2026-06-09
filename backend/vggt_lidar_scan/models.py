@@ -52,6 +52,14 @@ class ReconstructionMetrics(BaseModel):
     mesh_faces: int = 0
     final_output_type: Literal["point_cloud", "mesh"] = "point_cloud"
     object_mask_backend: str | None = None
+    camera_path_m: float | None = None
+    camera_extent_m: list[float] | None = None
+    lidar_bounds_min_m: list[float] | None = None
+    lidar_bounds_max_m: list[float] | None = None
+    lidar_extent_m: list[float] | None = None
+    object_bounds_min_m: list[float] | None = None
+    object_bounds_max_m: list[float] | None = None
+    object_extent_m: list[float] | None = None
     final_output: str
     lidar_output: str | None = None
     tsdf_output: str | None = None

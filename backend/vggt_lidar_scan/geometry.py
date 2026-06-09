@@ -4,6 +4,8 @@ import numpy as np
 
 from .models import FrameRecord
 
+OPENCV_TO_ARKIT_CAMERA = np.diag([1.0, -1.0, -1.0, 1.0]).astype(np.float32)
+
 
 def keyframe_indices(frame_count: int, max_frames: int) -> list[int]:
     if frame_count <= 0:
@@ -40,10 +42,21 @@ def unproject_depth(
 
     x_cam = (xs_valid - cx) * z_valid / fx
     y_cam = (ys_valid - cy) * z_valid / fy
+    camera_to_world_cv = camera_to_world_for_depth(camera_to_world).astype(np.float64)
     points_camera = np.stack([x_cam, y_cam, z_valid, np.ones_like(z_valid)], axis=1)
-    points_world = (camera_to_world @ points_camera.T).T[:, :3]
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        points_world = (camera_to_world_cv @ points_camera.T).T[:, :3]
     pixels = np.stack([xs_valid.astype(np.int32), ys_valid.astype(np.int32)], axis=1)
+    finite = np.isfinite(points_world).all(axis=1)
+    points_world = points_world[finite]
+    pixels = pixels[finite]
     return points_world.astype(np.float32), pixels
+
+
+def camera_to_world_for_depth(camera_to_world_arkit: np.ndarray) -> np.ndarray:
+    dtype = np.asarray(camera_to_world_arkit).dtype
+    conversion = OPENCV_TO_ARKIT_CAMERA.astype(dtype if np.issubdtype(dtype, np.floating) else np.float32)
+    return np.asarray(camera_to_world_arkit) @ conversion
 
 
 def colors_for_depth_pixels(image_rgb: np.ndarray, frame: FrameRecord, pixels_depth: np.ndarray) -> np.ndarray:
@@ -86,4 +99,3 @@ def similarity_umeyama(source: np.ndarray, target: np.ndarray) -> np.ndarray:
     transform[:3, :3] = scale * rotation
     transform[:3, 3] = translation
     return transform
-

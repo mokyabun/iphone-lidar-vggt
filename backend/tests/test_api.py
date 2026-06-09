@@ -50,3 +50,5 @@ def test_reconstruct_endpoint_returns_ply(tmp_path: Path) -> None:
     metrics = json.loads(response.headers["x-reconstruction-metrics"])
     assert metrics["final_output_type"] == "point_cloud"
     assert metrics["mesh_faces"] == 0
+    assert metrics["camera_path_m"] == 0.0
+    assert metrics["lidar_extent_m"] is not None

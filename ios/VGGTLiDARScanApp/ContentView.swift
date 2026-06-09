@@ -59,6 +59,14 @@ struct ContentView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
+                if let scaleText = scanner.lastScaleText {
+                    Text(scaleText)
+                        .font(.footnote.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
                 HStack(spacing: 12) {
                     Button {
                         scanner.isRecording ? scanner.stopScan() : scanner.startScan()

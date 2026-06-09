@@ -68,6 +68,14 @@ struct BackendMetrics: Decodable {
     let meshFaces: Int
     let finalOutputType: String
     let objectMaskBackend: String?
+    let cameraPathM: Double?
+    let cameraExtentM: [Double]?
+    let lidarBoundsMinM: [Double]?
+    let lidarBoundsMaxM: [Double]?
+    let lidarExtentM: [Double]?
+    let objectBoundsMinM: [Double]?
+    let objectBoundsMaxM: [Double]?
+    let objectExtentM: [Double]?
     let warnings: [String]
 }
 

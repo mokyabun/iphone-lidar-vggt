@@ -17,6 +17,9 @@ def main(
     stride: int = typer.Option(4, help="Depth pixel stride for point-cloud baseline."),
     confidence_minimum: int = typer.Option(1, help="Minimum ARKit confidence value to keep."),
     run_vggt: bool = typer.Option(False, "--run-vggt", help="Run optional VGGT stage."),
+    preserve_color: bool = typer.Option(True, "--preserve-color/--no-preserve-color", help="Write RGB colors when available."),
+    extract_object: bool = typer.Option(False, "--extract-object", help="Mask the central object before reconstruction."),
+    reconstruct_mesh: bool = typer.Option(False, "--reconstruct-mesh", help="Run LiDAR TSDF mesh reconstruction."),
 ) -> None:
     metrics = reconstruct_scan(
         package,
@@ -25,10 +28,12 @@ def main(
         stride=stride,
         confidence_minimum=confidence_minimum,
         run_vggt_stage=run_vggt,
+        preserve_color=preserve_color,
+        extract_object=extract_object,
+        reconstruct_mesh=reconstruct_mesh,
     )
     typer.echo(metrics.model_dump_json(indent=2))
 
 
 if __name__ == "__main__":
     app()
-

@@ -14,6 +14,7 @@ final class ScanSessionManager: NSObject, ObservableObject {
     @Published private(set) var resultURL: URL?
     @Published private(set) var isUploading = false
     @Published private(set) var lastErrorText: String?
+    @Published private(set) var lastScaleText: String?
 
     private let exporter = ScanPackageExporter()
     private let captureQueue = DispatchQueue(label: "edu.ssu.vggt-lidar.capture")
@@ -62,6 +63,7 @@ final class ScanSessionManager: NSObject, ObservableObject {
             lastPackageURL = nil
             resultURL = nil
             lastErrorText = nil
+            lastScaleText = nil
             lastCaptureTimestamp = 0
             isRecording = true
             statusText = "Scanning"
@@ -130,6 +132,7 @@ final class ScanSessionManager: NSObject, ObservableObject {
             if let warnings = result.metrics?.warnings, !warnings.isEmpty {
                 lastErrorText = warnings.joined(separator: "\n")
             }
+            lastScaleText = result.metrics?.scaleSummary
         } catch {
             statusText = "Backend failed"
             lastErrorText = error.localizedDescription
@@ -173,6 +176,17 @@ extension ScanSessionManager: ARSessionDelegate {
                 statusText = "Limited: \(reason.shortLabel)"
             }
         }
+    }
+}
+
+private extension BackendMetrics {
+    var scaleSummary: String? {
+        guard let extent = objectExtentM ?? lidarExtentM, extent.count == 3 else { return nil }
+        let size = extent.map { String(format: "%.2f", $0) }.joined(separator: " x ")
+        if let cameraPathM {
+            return "Scale \(size) m · path \(String(format: "%.2f", cameraPathM)) m"
+        }
+        return "Scale \(size) m"
     }
 }
 

@@ -19,8 +19,8 @@ def test_unproject_depth_identity_camera() -> None:
 
     assert points.shape == (4, 3)
     assert pixels.shape == (4, 2)
-    assert np.allclose(points[0], [0.0, 0.0, 1.0])
-    assert np.allclose(points[-1], [1.0, 1.0, 1.0])
+    assert np.allclose(points[0], [0.0, 0.0, -1.0])
+    assert np.allclose(points[-1], [1.0, -1.0, -1.0])
 
 
 def test_similarity_umeyama_recovers_scale_and_translation() -> None:
@@ -32,4 +32,3 @@ def test_similarity_umeyama_recovers_scale_and_translation() -> None:
     aligned = (transform @ source_h.T).T[:, :3]
 
     assert np.allclose(aligned, target)
-
