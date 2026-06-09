@@ -94,7 +94,13 @@ final class ScanSessionManager: NSObject, ObservableObject {
         }
     }
 
-    func uploadLatestPackage(backendBaseURL: String, runVGGT: Bool) async {
+    func uploadLatestPackage(
+        backendBaseURL: String,
+        runVGGT: Bool,
+        preserveColor: Bool,
+        extractObject: Bool,
+        reconstructMesh: Bool
+    ) async {
         guard let lastPackageURL else { return }
         guard let baseURL = URL(string: backendBaseURL) else {
             statusText = "Bad backend URL"
@@ -106,7 +112,13 @@ final class ScanSessionManager: NSObject, ObservableObject {
         lastErrorText = nil
         do {
             let client = BackendClient(baseURL: baseURL)
-            let result = try await client.reconstruct(packageURL: lastPackageURL, runVGGT: runVGGT)
+            let result = try await client.reconstruct(
+                packageURL: lastPackageURL,
+                runVGGT: runVGGT,
+                preserveColor: preserveColor,
+                extractObject: extractObject,
+                reconstructMesh: reconstructMesh
+            )
             resultURL = result.outputURL
             if runVGGT, let metrics = result.metrics, metrics.vggtPoints > 0 {
                 statusText = "VGGT ready"

@@ -4,6 +4,9 @@ struct ContentView: View {
     @StateObject private var scanner = ScanSessionManager()
     @AppStorage("backendBaseURL") private var backendBaseURL = "http://127.0.0.1:8000"
     @AppStorage("runVGGT") private var runVGGT = true
+    @AppStorage("preserveColor") private var preserveColor = true
+    @AppStorage("extractObject") private var extractObject = true
+    @AppStorage("reconstructMesh") private var reconstructMesh = false
     @State private var showResult = false
 
     var body: some View {
@@ -30,6 +33,24 @@ struct ContentView: View {
                 .toggleStyle(.switch)
                 .tint(.purple)
 
+                Toggle(isOn: $preserveColor) {
+                    Label("Color", systemImage: "paintpalette")
+                }
+                .toggleStyle(.switch)
+                .tint(.orange)
+
+                Toggle(isOn: $extractObject) {
+                    Label("Object", systemImage: "scope")
+                }
+                .toggleStyle(.switch)
+                .tint(.blue)
+
+                Toggle(isOn: $reconstructMesh) {
+                    Label("Mesh", systemImage: "cube")
+                }
+                .toggleStyle(.switch)
+                .tint(.green)
+
                 if let errorText = scanner.lastErrorText {
                     Text(errorText)
                         .font(.footnote)
@@ -52,7 +73,13 @@ struct ContentView: View {
                     if let packageURL = scanner.lastPackageURL {
                         Button {
                             Task {
-                                await scanner.uploadLatestPackage(backendBaseURL: backendBaseURL, runVGGT: runVGGT)
+                                await scanner.uploadLatestPackage(
+                                    backendBaseURL: backendBaseURL,
+                                    runVGGT: runVGGT,
+                                    preserveColor: preserveColor,
+                                    extractObject: extractObject,
+                                    reconstructMesh: reconstructMesh
+                                )
                                 showResult = scanner.resultURL != nil
                             }
                         } label: {

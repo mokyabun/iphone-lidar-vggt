@@ -13,6 +13,7 @@ from .geometry import keyframe_indices
 from .io import read_image
 from .models import FrameRecord
 from .ply import write_point_cloud_ply
+from .segmentation import resize_mask
 from .vggt_manager import configure_huggingface_cache, ensure_vggt_repo
 
 
@@ -35,7 +36,13 @@ def preload_vggt() -> str:
     return f"VGGT loaded on {runtime.device} with dtype {runtime.dtype}"
 
 
-def run_vggt(root: Path, frames: list[FrameRecord], output_dir: Path) -> tuple[Path, int]:
+def run_vggt(
+    root: Path,
+    frames: list[FrameRecord],
+    output_dir: Path,
+    preserve_color: bool = True,
+    object_masks: dict[str, np.ndarray] | None = None,
+) -> tuple[Path, int]:
     frames = _limit_vggt_frames(frames)
     image_dir = output_dir / "vggt_scene" / "images"
     image_dir.mkdir(parents=True, exist_ok=True)
@@ -53,7 +60,7 @@ def run_vggt(root: Path, frames: list[FrameRecord], output_dir: Path) -> tuple[P
     runner = os.environ.get("VGGT_RUNNER")
     if runner:
         return _run_external_vggt(runner, image_dir, output_dir)
-    return _run_python_vggt(image_paths, output_dir)
+    return _run_python_vggt(image_paths, output_dir, frames, preserve_color, object_masks)
 
 
 def _run_external_vggt(runner: str, image_dir: Path, output_dir: Path) -> tuple[Path, int]:
@@ -69,7 +76,13 @@ def _run_external_vggt(runner: str, image_dir: Path, output_dir: Path) -> tuple[
     return candidate, _count_ply_vertices(candidate)
 
 
-def _run_python_vggt(image_paths: list[Path], output_dir: Path) -> tuple[Path, int]:
+def _run_python_vggt(
+    image_paths: list[Path],
+    output_dir: Path,
+    frames: list[FrameRecord],
+    preserve_color: bool,
+    object_masks: dict[str, np.ndarray] | None,
+) -> tuple[Path, int]:
     runtime = _load_vggt_runtime()
     torch = runtime.torch
 
@@ -86,17 +99,26 @@ def _run_python_vggt(image_paths: list[Path], output_dir: Path) -> tuple[Path, i
             depth_map, depth_conf = runtime.model.depth_head(aggregated_tokens_list, images, ps_idx)
             point_map = runtime.unproject_depth_map_to_point_map(depth_map.squeeze(0), extrinsic.squeeze(0), intrinsic.squeeze(0))
 
-    points = _as_numpy(point_map).reshape(-1, 3)
+    point_map_np = _as_numpy(point_map)
+    if point_map_np.ndim != 4 or point_map_np.shape[-1] != 3:
+        raise RuntimeError(f"Unexpected VGGT point map shape: {point_map_np.shape}")
+    points = point_map_np.reshape(-1, 3)
     confidence = _as_numpy(depth_conf).reshape(-1)
     keep = np.isfinite(points).all(axis=1)
+    colors = _colors_for_vggt_points(image_paths, point_map_np.shape[2], point_map_np.shape[1]) if preserve_color else None
+    if object_masks:
+        object_keep = _vggt_object_keep(frames, object_masks, point_map_np.shape[2], point_map_np.shape[1])
+        if object_keep.size == keep.size:
+            keep &= object_keep
     if confidence.size == points.shape[0]:
         finite_confidence = confidence[np.isfinite(confidence)]
         if finite_confidence.size:
             keep &= confidence > np.percentile(finite_confidence, 60)
     points = points[keep].astype(np.float32)
+    colors = colors[keep] if colors is not None and colors.shape[0] == keep.size else None
 
     output = output_dir / "scan_vggt_points.ply"
-    write_point_cloud_ply(output, points)
+    write_point_cloud_ply(output, points, colors)
     return output, int(points.shape[0])
 
 
@@ -167,6 +189,27 @@ def _as_numpy(value: object) -> np.ndarray:
     if hasattr(value, "numpy"):
         return value.numpy()
     return np.asarray(value)
+
+
+def _colors_for_vggt_points(image_paths: list[Path], width: int, height: int) -> np.ndarray:
+    from PIL import Image
+
+    chunks: list[np.ndarray] = []
+    for path in image_paths:
+        rgb = Image.open(path).convert("RGB").resize((width, height), Image.Resampling.BILINEAR)
+        chunks.append(np.asarray(rgb, dtype=np.uint8).reshape(-1, 3))
+    return np.concatenate(chunks, axis=0) if chunks else np.empty((0, 3), dtype=np.uint8)
+
+
+def _vggt_object_keep(frames: list[FrameRecord], object_masks: dict[str, np.ndarray], width: int, height: int) -> np.ndarray:
+    chunks: list[np.ndarray] = []
+    for frame in frames:
+        mask = object_masks.get(frame.frame_id)
+        if mask is None:
+            chunks.append(np.ones(width * height, dtype=bool))
+        else:
+            chunks.append(resize_mask(mask, width, height).reshape(-1))
+    return np.concatenate(chunks, axis=0) if chunks else np.empty((0,), dtype=bool)
 
 
 def _env_int(name: str, default: int) -> int:

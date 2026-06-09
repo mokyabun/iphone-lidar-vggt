@@ -36,7 +36,13 @@ def health() -> dict[str, str]:
 
 
 @app.post("/jobs")
-def create_job(scan_package: UploadFile = File(...), run_vggt: bool = False) -> dict[str, object]:
+def create_job(
+    scan_package: UploadFile = File(...),
+    run_vggt: bool = False,
+    preserve_color: bool = True,
+    extract_object: bool = False,
+    reconstruct_mesh: bool = False,
+) -> dict[str, object]:
     job_id = uuid.uuid4().hex
     job_dir = RUN_ROOT / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -46,7 +52,14 @@ def create_job(scan_package: UploadFile = File(...), run_vggt: bool = False) -> 
         shutil.copyfileobj(scan_package.file, handle)
 
     try:
-        metrics = reconstruct_scan(package_path, job_dir / "output", run_vggt_stage=run_vggt)
+        metrics = reconstruct_scan(
+            package_path,
+            job_dir / "output",
+            run_vggt_stage=run_vggt,
+            preserve_color=preserve_color,
+            extract_object=extract_object,
+            reconstruct_mesh=reconstruct_mesh,
+        )
     except Exception as exc:  # noqa: BLE001 - expose job failure in MVP API.
         (job_dir / "error.txt").write_text(str(exc))
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -55,7 +68,13 @@ def create_job(scan_package: UploadFile = File(...), run_vggt: bool = False) -> 
 
 
 @app.post("/reconstruct")
-def reconstruct_now(scan_package: UploadFile = File(...), run_vggt: bool = False) -> FileResponse:
+def reconstruct_now(
+    scan_package: UploadFile = File(...),
+    run_vggt: bool = False,
+    preserve_color: bool = True,
+    extract_object: bool = False,
+    reconstruct_mesh: bool = False,
+) -> FileResponse:
     job_id = uuid.uuid4().hex
     job_dir = RUN_ROOT / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -65,7 +84,14 @@ def reconstruct_now(scan_package: UploadFile = File(...), run_vggt: bool = False
         shutil.copyfileobj(scan_package.file, handle)
 
     try:
-        metrics = reconstruct_scan(package_path, job_dir / "output", run_vggt_stage=run_vggt)
+        metrics = reconstruct_scan(
+            package_path,
+            job_dir / "output",
+            run_vggt_stage=run_vggt,
+            preserve_color=preserve_color,
+            extract_object=extract_object,
+            reconstruct_mesh=reconstruct_mesh,
+        )
     except Exception as exc:  # noqa: BLE001 - direct demo endpoint should return a clear API error.
         (job_dir / "error.txt").write_text(str(exc))
         raise HTTPException(status_code=422, detail=str(exc)) from exc

@@ -3,9 +3,20 @@ import Foundation
 struct BackendClient {
     let baseURL: URL
 
-    func reconstruct(packageURL: URL, runVGGT: Bool) async throws -> BackendReconstructionResult {
+    func reconstruct(
+        packageURL: URL,
+        runVGGT: Bool,
+        preserveColor: Bool,
+        extractObject: Bool,
+        reconstructMesh: Bool
+    ) async throws -> BackendReconstructionResult {
         var components = URLComponents(url: baseURL.appendingPathComponent("reconstruct"), resolvingAgainstBaseURL: false)
-        components?.queryItems = [URLQueryItem(name: "run_vggt", value: runVGGT ? "true" : "false")]
+        components?.queryItems = [
+            URLQueryItem(name: "run_vggt", value: runVGGT ? "true" : "false"),
+            URLQueryItem(name: "preserve_color", value: preserveColor ? "true" : "false"),
+            URLQueryItem(name: "extract_object", value: extractObject ? "true" : "false"),
+            URLQueryItem(name: "reconstruct_mesh", value: reconstructMesh ? "true" : "false")
+        ]
         guard let url = components?.url else {
             throw URLError(.badURL)
         }

@@ -149,6 +149,15 @@ Performance knobs:
 - `VGGT_PRELOAD=1` loads the VGGT model when the API starts, so the first reconstruction request does not pay the model-load cost.
 - `SCAN_MAX_FRAMES=24` limits LiDAR baseline frames.
 - `SCAN_RUN_TSDF=0` skips the slower Open3D TSDF mesh stage. Set to `1` only when you specifically want TSDF output.
+- `OBJECT_MASK_BACKEND=depth` uses fast LiDAR-depth connected components for the centered object. `sam3` can be used experimentally when Ultralytics SAM 3 is installed.
+
+To try SAM 3 object masking on RunPod:
+
+```bash
+APP_INSTALL_EXTRAS=reconstruction,vggt,segmentation
+OBJECT_MASK_BACKEND=sam3
+OBJECT_SAM_MODEL=sam3.pt
+```
 
 For a private fork or different account, set `APP_REPO_URL` in the RunPod template environment variables and keep the start command pointed at that repo's raw `run.sh`.
 
