@@ -82,9 +82,13 @@ def _run_python_vggt(image_paths: list[Path], output_dir: Path) -> tuple[Path, i
             depth_map, depth_conf = model.depth_head(aggregated_tokens_list, images, ps_idx)
             point_map = unproject_depth_map_to_point_map(depth_map.squeeze(0), extrinsic.squeeze(0), intrinsic.squeeze(0))
 
-    points = np.asarray(point_map.detach().cpu()).reshape(-1, 3)
-    confidence = np.asarray(depth_conf.detach().cpu()).reshape(-1)
-    keep = np.isfinite(points).all(axis=1) & (confidence > np.percentile(confidence, 60))
+    points = _as_numpy(point_map).reshape(-1, 3)
+    confidence = _as_numpy(depth_conf).reshape(-1)
+    keep = np.isfinite(points).all(axis=1)
+    if confidence.size == points.shape[0]:
+        finite_confidence = confidence[np.isfinite(confidence)]
+        if finite_confidence.size:
+            keep &= confidence > np.percentile(finite_confidence, 60)
     points = points[keep].astype(np.float32)
 
     output = output_dir / "scan_vggt_points.ply"
@@ -97,3 +101,15 @@ def _count_ply_vertices(path: Path) -> int:
         if line.startswith("element vertex "):
             return int(line.split()[-1])
     return 0
+
+
+def _as_numpy(value: object) -> np.ndarray:
+    if hasattr(value, "detach"):
+        value = value.detach()
+    if hasattr(value, "float"):
+        value = value.float()
+    if hasattr(value, "cpu"):
+        value = value.cpu()
+    if hasattr(value, "numpy"):
+        return value.numpy()
+    return np.asarray(value)
