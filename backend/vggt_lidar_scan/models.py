@@ -48,9 +48,12 @@ class ReconstructionMetrics(BaseModel):
     selected_keyframes: int
     lidar_points: int
     vggt_points: int = 0
+    mesh_vertices: int = 0
+    mesh_faces: int = 0
+    final_output_type: Literal["point_cloud", "mesh"] = "point_cloud"
+    object_mask_backend: str | None = None
     final_output: str
     lidar_output: str | None = None
     tsdf_output: str | None = None
     vggt_output: str | None = None
     warnings: list[str] = Field(default_factory=list)
-

@@ -3,23 +3,30 @@ from __future__ import annotations
 import os
 from collections import deque
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from PIL import Image
 
 from .models import FrameRecord
 
+_SAM_MODEL_CACHE: Any | None = None
+
 
 def object_mask(root: Path, frame: FrameRecord, depth: np.ndarray) -> np.ndarray:
-    backend = os.environ.get("OBJECT_MASK_BACKEND", "depth").lower()
-    if backend == "sam3":
+    backend = os.environ.get("OBJECT_MASK_BACKEND", "sam3_depth").lower()
+    depth_mask = central_object_mask(depth)
+    if backend in {"sam3", "sam3_depth"}:
         try:
             sam_mask = _sam3_center_mask(root / frame.image_path, depth.shape)
-            if sam_mask is not None:
-                return sam_mask & central_object_mask(depth)
+            if sam_mask is not None and _mask_is_plausible(sam_mask):
+                if backend == "sam3_depth":
+                    refined = sam_mask & depth_mask
+                    return refined if _mask_is_plausible(refined) else depth_mask
+                return sam_mask
         except Exception:
             pass
-    return central_object_mask(depth)
+    return depth_mask
 
 
 def central_object_mask(depth: np.ndarray) -> np.ndarray:
@@ -110,10 +117,13 @@ def _env_float(name: str, default: float) -> float:
 
 
 def _sam3_center_mask(image_path: Path, depth_shape: tuple[int, int]) -> np.ndarray | None:
+    global _SAM_MODEL_CACHE
     from ultralytics import SAM  # type: ignore
 
     model_name = os.environ.get("OBJECT_SAM_MODEL", "sam3.pt")
-    model = SAM(model_name)
+    if _SAM_MODEL_CACHE is None:
+        _SAM_MODEL_CACHE = SAM(model_name)
+    model = _SAM_MODEL_CACHE
     with Image.open(image_path) as image:
         width, height = image.size
     points = [[width / 2, height / 2]]
@@ -126,3 +136,10 @@ def _sam3_center_mask(image_path: Path, depth_shape: tuple[int, int]) -> np.ndar
         return None
     mask = mask_data[0].detach().cpu().numpy() > 0.5
     return resize_mask(mask, depth_shape[1], depth_shape[0])
+
+
+def _mask_is_plausible(mask: np.ndarray) -> bool:
+    area_ratio = float(np.count_nonzero(mask)) / float(mask.size) if mask.size else 0.0
+    min_ratio = _env_float("OBJECT_MIN_MASK_RATIO", 0.01)
+    max_ratio = _env_float("OBJECT_MAX_MASK_RATIO", 0.85)
+    return min_ratio <= area_ratio <= max_ratio

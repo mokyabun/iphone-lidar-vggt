@@ -120,7 +120,9 @@ final class ScanSessionManager: NSObject, ObservableObject {
                 reconstructMesh: reconstructMesh
             )
             resultURL = result.outputURL
-            if runVGGT, let metrics = result.metrics, metrics.vggtPoints > 0 {
+            if let metrics = result.metrics, metrics.finalOutputType == "mesh", metrics.meshFaces > 0 {
+                statusText = "Mesh ready"
+            } else if runVGGT, let metrics = result.metrics, metrics.vggtPoints > 0 {
                 statusText = "VGGT ready"
             } else {
                 statusText = "Result ready"

@@ -27,3 +27,15 @@ def write_point_cloud_ply(path: Path, points: np.ndarray, colors: np.ndarray | N
                 f"{int(color[0])} {int(color[1])} {int(color[2])}\n"
             )
 
+
+def count_ply_elements(path: Path) -> tuple[int, int]:
+    vertices = 0
+    faces = 0
+    for line in path.read_text(errors="ignore").splitlines():
+        if line.startswith("element vertex "):
+            vertices = int(line.split()[-1])
+        elif line.startswith("element face "):
+            faces = int(line.split()[-1])
+        elif line.strip() == "end_header":
+            break
+    return vertices, faces

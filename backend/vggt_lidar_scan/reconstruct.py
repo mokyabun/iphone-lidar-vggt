@@ -9,7 +9,7 @@ import numpy as np
 from .geometry import apply_confidence_mask, colors_for_depth_pixels, keyframe_indices, unproject_depth
 from .io import open_scan_package, read_confidence, read_depth, read_frames, read_image, write_json
 from .models import FrameRecord, ReconstructionMetrics
-from .ply import write_point_cloud_ply
+from .ply import count_ply_elements, write_point_cloud_ply
 from .segmentation import object_mask
 from .vggt_adapter import run_vggt
 
@@ -30,6 +30,7 @@ def reconstruct_scan(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     warnings: list[str] = []
+    object_mask_backend = os.environ.get("OBJECT_MASK_BACKEND", "sam3_depth") if extract_object else None
 
     with open_scan_package(Path(package_path)) as root:
         frames = read_frames(root)
@@ -50,8 +51,12 @@ def reconstruct_scan(
             except Exception as exc:  # noqa: BLE001 - VGGT is optional and environment-sensitive.
                 warnings.append(f"VGGT stage skipped: {exc}")
 
+        mesh_vertices = 0
+        mesh_faces = 0
         final_output = output_dir / "scan_final.ply"
         final_source = tsdf_output if reconstruct_mesh and tsdf_output else vggt_output or tsdf_output or lidar_output
+        if final_source.exists():
+            mesh_vertices, mesh_faces = count_ply_elements(final_source)
         shutil.copyfile(final_source, final_output)
 
     metrics = ReconstructionMetrics(
@@ -59,6 +64,10 @@ def reconstruct_scan(
         selected_keyframes=len(selected),
         lidar_points=int(points.shape[0]),
         vggt_points=vggt_points,
+        mesh_vertices=mesh_vertices if mesh_faces else 0,
+        mesh_faces=mesh_faces,
+        final_output_type="mesh" if mesh_faces else "point_cloud",
+        object_mask_backend=object_mask_backend,
         final_output=str(final_output),
         lidar_output=str(lidar_output),
         tsdf_output=str(tsdf_output) if tsdf_output else None,
@@ -127,9 +136,12 @@ def try_open3d_tsdf(
         return None
 
     try:
+        voxel_length = _env_float("OBJECT_TSDF_VOXEL_METERS", 0.008)
+        sdf_trunc = _env_float("OBJECT_TSDF_TRUNC_METERS", 0.035)
+        depth_trunc = _env_float("OBJECT_TSDF_DEPTH_TRUNC_METERS", 4.0)
         volume = o3d.pipelines.integration.ScalableTSDFVolume(
-            voxel_length=0.015,
-            sdf_trunc=0.06,
+            voxel_length=voxel_length,
+            sdf_trunc=sdf_trunc,
             color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8,
         )
 
@@ -148,7 +160,7 @@ def try_open3d_tsdf(
                 color,
                 depth,
                 depth_scale=1.0,
-                depth_trunc=8.0,
+                depth_trunc=depth_trunc,
                 convert_rgb_to_intensity=False,
             )
             k = np.asarray(frame.intrinsics_depth, dtype=np.float64)
@@ -158,8 +170,8 @@ def try_open3d_tsdf(
             volume.integrate(rgbd, intrinsic, world_to_camera)
 
         mesh = volume.extract_triangle_mesh()
-        mesh.compute_vertex_normals()
-        output = output_dir / "scan_lidar_tsdf.ply"
+        mesh = _postprocess_open3d_mesh(mesh, o3d)
+        output = output_dir / "scan_object_mesh.ply"
         if not o3d.io.write_triangle_mesh(str(output), mesh, write_ascii=True):
             warnings.append("Open3D TSDF mesh export failed; wrote point-cloud baseline only.")
             return None
@@ -196,3 +208,38 @@ def _env_int(name: str, default: int) -> int:
         return max(1, int(value))
     except ValueError:
         return default
+
+
+def _env_float(name: str, default: float) -> float:
+    value = os.environ.get(name)
+    if not value:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
+def _postprocess_open3d_mesh(mesh, o3d):  # noqa: ANN001, ANN201 - Open3D runtime type.
+    mesh.remove_degenerate_triangles()
+    mesh.remove_duplicated_triangles()
+    mesh.remove_duplicated_vertices()
+    mesh.remove_non_manifold_edges()
+    triangle_count = len(mesh.triangles)
+    if triangle_count:
+        labels, counts, _ = mesh.cluster_connected_triangles()
+        labels_np = np.asarray(labels)
+        counts_np = np.asarray(counts)
+        if counts_np.size:
+            keep_label = int(np.argmax(counts_np))
+            remove = labels_np != keep_label
+            mesh.remove_triangles_by_mask(remove.tolist())
+            mesh.remove_unreferenced_vertices()
+    smoothing_iterations = _env_int("OBJECT_MESH_SMOOTH_ITERATIONS", 1)
+    if smoothing_iterations > 0 and len(mesh.triangles):
+        mesh = mesh.filter_smooth_simple(number_of_iterations=smoothing_iterations)
+    target_triangles = _env_int("OBJECT_MESH_MAX_TRIANGLES", 120000)
+    if len(mesh.triangles) > target_triangles:
+        mesh = mesh.simplify_quadric_decimation(target_number_of_triangles=target_triangles)
+    mesh.compute_vertex_normals()
+    return mesh

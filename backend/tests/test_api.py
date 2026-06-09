@@ -47,4 +47,6 @@ def test_reconstruct_endpoint_returns_ply(tmp_path: Path) -> None:
     assert response.status_code == 200
     assert response.content.startswith(b"ply\n")
     assert response.headers["x-job-id"]
-
+    metrics = json.loads(response.headers["x-reconstruction-metrics"])
+    assert metrics["final_output_type"] == "point_cloud"
+    assert metrics["mesh_faces"] == 0

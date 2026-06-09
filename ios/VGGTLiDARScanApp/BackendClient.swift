@@ -59,6 +59,10 @@ struct BackendMetrics: Decodable {
     let selectedKeyframes: Int
     let lidarPoints: Int
     let vggtPoints: Int
+    let meshVertices: Int
+    let meshFaces: Int
+    let finalOutputType: String
+    let objectMaskBackend: String?
     let warnings: [String]
 }
 

@@ -134,14 +134,18 @@ APP_REPO_REF=main
 APP_DIR=/workspace/iphone-lidar-vggt
 APP_UPDATE_MODE=reset
 APP_PREPARE_VGGT=1
-APP_PREFETCH_VGGT=0
+APP_PREFETCH_VGGT=1
+APP_INSTALL_EXTRAS=reconstruction,vggt,segmentation
 VGGT_MAX_IMAGES=12
 VGGT_PRELOAD=1
 SCAN_MAX_FRAMES=24
 SCAN_RUN_TSDF=0
+MESH_METHOD=object_tsdf
+OBJECT_MASK_BACKEND=sam3_depth
+OBJECT_SAM_MODEL=sam3.pt
 ```
 
-`APP_PREPARE_VGGT=1` clones `facebookresearch/vggt` and installs it as an editable Python package. It does not pre-download the model checkpoint unless `APP_PREFETCH_VGGT=1` is also set.
+`APP_PREPARE_VGGT=1` clones `facebookresearch/vggt` and installs it as an editable Python package. `APP_PREFETCH_VGGT=1` also downloads the model checkpoint before serving.
 
 Performance knobs:
 
@@ -149,22 +153,20 @@ Performance knobs:
 - `VGGT_PRELOAD=1` loads the VGGT model when the API starts, so the first reconstruction request does not pay the model-load cost.
 - `SCAN_MAX_FRAMES=24` limits LiDAR baseline frames.
 - `SCAN_RUN_TSDF=0` skips the slower Open3D TSDF mesh stage. Set to `1` only when you specifically want TSDF output.
-- `OBJECT_MASK_BACKEND=depth` uses fast LiDAR-depth connected components for the centered object. `sam3` can be used experimentally when Ultralytics SAM 3 is installed.
+- `OBJECT_MASK_BACKEND=sam3_depth` uses SAM 3 center-point segmentation refined by LiDAR depth, with depth-only fallback.
 
-To try SAM 3 object masking on RunPod:
+To force the faster depth-only object mask:
 
 ```bash
-APP_INSTALL_EXTRAS=reconstruction,vggt,segmentation
-OBJECT_MASK_BACKEND=sam3
-OBJECT_SAM_MODEL=sam3.pt
+OBJECT_MASK_BACKEND=depth
 ```
 
 For a private fork or different account, set `APP_REPO_URL` in the RunPod template environment variables and keep the start command pointed at that repo's raw `run.sh`.
 
-To pre-download the VGGT repo/checkpoint before serving, set:
+To skip VGGT checkpoint predownload for faster pod startup, set:
 
 ```bash
-APP_PREFETCH_VGGT=1
+APP_PREFETCH_VGGT=0
 ```
 
 ## Docker
