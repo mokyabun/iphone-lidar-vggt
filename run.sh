@@ -9,8 +9,9 @@ APP_PORT="${APP_PORT:-8000}"
 APP_UPDATE_MODE="${APP_UPDATE_MODE:-reset}"
 APP_INSTALL_EXTRAS="${APP_INSTALL_EXTRAS:-reconstruction,vggt}"
 APP_INSTALL_APT="${APP_INSTALL_APT:-1}"
+APP_PREPARE_VGGT="${APP_PREPARE_VGGT:-1}"
 APP_PREFETCH_VGGT="${APP_PREFETCH_VGGT:-0}"
-PYTHON_BIN="${PYTHON_BIN:-python}"
+PYTHON_BIN="${PYTHON_BIN:-}"
 
 export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
 export PIP_NO_CACHE_DIR="${PIP_NO_CACHE_DIR:-1}"
@@ -102,6 +103,13 @@ sync_repo() {
 
 install_python_packages() {
   log "Installing Python dependencies."
+  if [ -z "${PYTHON_BIN}" ]; then
+    if command -v python >/dev/null 2>&1; then
+      PYTHON_BIN=python
+    else
+      PYTHON_BIN=python3
+    fi
+  fi
   "${PYTHON_BIN}" -m pip install --upgrade pip uv
 
   cd "${APP_DIR}"
@@ -113,11 +121,14 @@ install_python_packages() {
 }
 
 prepare_vggt() {
-  if [ "${APP_PREFETCH_VGGT}" = "1" ]; then
-    log "Preparing VGGT repo and weights."
-    vggt-prepare
+  if [ "${APP_PREPARE_VGGT}" = "1" ]; then
+    log "Preparing VGGT repo and Python package."
+    VGGT_DOWNLOAD_WEIGHTS="${APP_PREFETCH_VGGT}" vggt-prepare
+  elif [ "${APP_PREFETCH_VGGT}" = "1" ]; then
+    log "APP_PREFETCH_VGGT=1 requires APP_PREPARE_VGGT=1."
+    exit 2
   else
-    log "Skipping VGGT prefetch. Set APP_PREFETCH_VGGT=1 to download before serving."
+    log "Skipping VGGT preparation. Set APP_PREPARE_VGGT=1 to clone and install VGGT before serving."
   fi
 }
 

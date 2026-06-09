@@ -133,8 +133,11 @@ APP_REPO_URL=https://github.com/mokyabun/iphone-lidar-vggt.git
 APP_REPO_REF=main
 APP_DIR=/workspace/iphone-lidar-vggt
 APP_UPDATE_MODE=reset
+APP_PREPARE_VGGT=1
 APP_PREFETCH_VGGT=0
 ```
+
+`APP_PREPARE_VGGT=1` clones `facebookresearch/vggt` and installs it as an editable Python package. It does not pre-download the model checkpoint unless `APP_PREFETCH_VGGT=1` is also set.
 
 For a private fork or different account, set `APP_REPO_URL` in the RunPod template environment variables and keep the start command pointed at that repo's raw `run.sh`.
 

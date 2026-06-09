@@ -28,6 +28,7 @@ def ensure_vggt_repo(auto_download: bool | None = None) -> Path | None:
 
     repo_dir = Path(os.environ.get("VGGT_REPO_DIR", default_cache_root() / "vggt")).expanduser()
     if repo_dir.exists():
+        ensure_vggt_package_installed(repo_dir)
         _prepend_python_path(repo_dir)
         return repo_dir
 
@@ -39,8 +40,20 @@ def ensure_vggt_repo(auto_download: bool | None = None) -> Path | None:
     repo_dir.parent.mkdir(parents=True, exist_ok=True)
     repo_url = os.environ.get("VGGT_REPO_URL", DEFAULT_REPO_URL)
     subprocess.run(["git", "clone", "--depth", "1", repo_url, str(repo_dir)], check=True)
+    ensure_vggt_package_installed(repo_dir)
     _prepend_python_path(repo_dir)
     return repo_dir
+
+
+def ensure_vggt_package_installed(repo_dir: Path) -> None:
+    if os.environ.get("VGGT_INSTALL_REPO", "1") in {"0", "false", "False"}:
+        return
+    marker = repo_dir / ".vggt_lidar_installed"
+    pyproject = repo_dir / "pyproject.toml"
+    if marker.exists() or not pyproject.exists():
+        return
+    subprocess.run([sys.executable, "-m", "pip", "install", "-e", str(repo_dir)], check=True)
+    marker.write_text("installed\n")
 
 
 def ensure_vggt_weights(model_id: str = DEFAULT_MODEL_ID) -> Path:
@@ -69,6 +82,7 @@ def _prepend_python_path(path: Path) -> None:
 
 
 def main() -> None:
-    prepared = prepare_vggt(download_weights=True)
+    download_weights = os.environ.get("VGGT_DOWNLOAD_WEIGHTS", "1") not in {"0", "false", "False"}
+    prepared = prepare_vggt(download_weights=download_weights)
     print(f"VGGT repo: {prepared['repo']}")
     print(f"VGGT weights: {prepared['weights']}")

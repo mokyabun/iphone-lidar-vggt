@@ -56,7 +56,7 @@ def _run_python_vggt(image_paths: list[Path], output_dir: Path) -> tuple[Path, i
         from vggt.utils.load_fn import load_and_preprocess_images
         from vggt.utils.pose_enc import pose_encoding_to_extri_intri
     except Exception as exc:  # noqa: BLE001 - report missing optional stack clearly.
-        raise RuntimeError("Install the VGGT package or set VGGT_RUNNER for GPU inference") from exc
+        raise RuntimeError(f"VGGT Python imports failed: {exc}") from exc
 
     if not image_paths:
         raise RuntimeError("No keyframe images available for VGGT")
