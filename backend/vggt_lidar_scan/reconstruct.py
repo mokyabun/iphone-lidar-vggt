@@ -10,6 +10,7 @@ from .geometry import apply_confidence_mask, camera_to_world_for_depth, colors_f
 from .io import open_scan_package, read_confidence, read_depth, read_frames, read_image, write_json
 from .models import FrameRecord, ReconstructionMetrics
 from .ply import count_ply_elements, write_point_cloud_ply
+from .point_cloud import clean_point_cloud, temporal_consistency_filter
 from .segmentation import object_mask
 from .vggt_adapter import run_vggt
 
@@ -42,6 +43,8 @@ def reconstruct_scan(
         )
         object_masks = build_object_masks(root, selected) if extract_object else None
         points, colors = build_lidar_point_cloud(root, selected, stride, confidence_minimum, preserve_color, object_masks)
+        lidar_raw_points = int(points.shape[0])
+        points, colors, lidar_removed_points = clean_point_cloud(points, colors, object_mode=extract_object)
         lidar_points_all = build_lidar_point_cloud(root, selected, stride, confidence_minimum, preserve_color, None)[0] if extract_object else points
 
         lidar_output = output_dir / "scan_lidar_points.ply"
@@ -71,7 +74,19 @@ def reconstruct_scan(
         mesh_vertices = 0
         mesh_faces = 0
         final_output = output_dir / "scan_final.ply"
-        final_source = mesh_output if reconstruct_mesh and mesh_output else vggt_output or mesh_output or lidar_output
+        use_vggt_as_final = _env_bool("VGGT_AS_FINAL", False)
+        if reconstruct_mesh and mesh_output:
+            final_source = mesh_output
+            final_output_source = actual_mesh_method or "mesh"
+        elif use_vggt_as_final and vggt_output:
+            final_source = vggt_output
+            final_output_source = "vggt"
+        elif mesh_output:
+            final_source = mesh_output
+            final_output_source = actual_mesh_method or "mesh"
+        else:
+            final_source = lidar_output
+            final_output_source = "lidar_metric"
         if final_source.exists():
             mesh_vertices, mesh_faces = count_ply_elements(final_source)
         shutil.copyfile(final_source, final_output)
@@ -82,11 +97,14 @@ def reconstruct_scan(
         frame_count=len(frames),
         selected_keyframes=len(selected),
         lidar_points=int(points.shape[0]),
+        lidar_raw_points=lidar_raw_points,
+        lidar_removed_points=lidar_removed_points,
         vggt_points=vggt_points,
         mesh_vertices=mesh_vertices if mesh_faces else 0,
         mesh_faces=mesh_faces,
         mesh_method=actual_mesh_method if mesh_faces else None,
         final_output_type="mesh" if mesh_faces else "point_cloud",
+        final_output_source=final_output_source,
         object_mask_backend=object_mask_backend,
         camera_path_m=_camera_path_m(frames),
         camera_extent_m=_camera_extent_m(frames),
@@ -117,8 +135,9 @@ def build_lidar_point_cloud(
 ) -> tuple[np.ndarray, np.ndarray]:
     point_chunks: list[np.ndarray] = []
     color_chunks: list[np.ndarray] = []
+    frame_id_chunks: list[np.ndarray] = []
 
-    for frame in frames:
+    for frame_index, frame in enumerate(frames):
         depth = read_depth(root, frame)
         confidence = read_confidence(root, frame)
         image = np.asarray(read_image(root, frame))
@@ -137,10 +156,15 @@ def build_lidar_point_cloud(
         if points.size:
             point_chunks.append(points)
             color_chunks.append(colors)
+            frame_id_chunks.append(np.full(points.shape[0], frame_index, dtype=np.int16))
 
     if not point_chunks:
         return np.empty((0, 3), dtype=np.float32), np.empty((0, 3), dtype=np.uint8)
-    return np.concatenate(point_chunks, axis=0), np.concatenate(color_chunks, axis=0)
+    points = np.concatenate(point_chunks, axis=0)
+    colors = np.concatenate(color_chunks, axis=0)
+    if object_masks:
+        points, colors = temporal_consistency_filter(points, colors, np.concatenate(frame_id_chunks, axis=0))
+    return points, colors
 
 
 def build_object_masks(root: Path, frames: list[FrameRecord]) -> dict[str, np.ndarray]:
@@ -169,44 +193,51 @@ def build_mesh_output(
     object_masks: dict[str, np.ndarray] | None,
     mesh_method: str | None,
 ) -> tuple[Path | None, Path | None, str | None]:
-    if mesh_method in {"printable", "printable_alpha", "alpha", "alpha_shape"}:
-        printable = try_open3d_printable_alpha_mesh(points, colors, output_dir, warnings, preserve_color)
+    if mesh_method in {"printable", "printable_metric", "printable_hybrid", "printable_alpha", "alpha", "alpha_shape", "poisson"}:
+        requested_method = "printable_alpha" if mesh_method in {"printable", "printable_metric"} else mesh_method
+        printable, printable_method = try_open3d_printable_mesh(
+            points, colors, output_dir, warnings, preserve_color, requested_method
+        )
         if printable:
-            return printable, None, "printable_alpha"
+            return printable, None, printable_method
         tsdf = try_open3d_tsdf(root, frames, output_dir, warnings, preserve_color, object_masks)
         return tsdf, tsdf, "object_tsdf" if tsdf else None
     if mesh_method in {"tsdf", "object_tsdf"}:
         tsdf = try_open3d_tsdf(root, frames, output_dir, warnings, preserve_color, object_masks)
         return tsdf, tsdf, "object_tsdf" if tsdf else None
 
-    warnings.append(f"Unknown MESH_METHOD={mesh_method}; falling back to printable_alpha.")
-    printable = try_open3d_printable_alpha_mesh(points, colors, output_dir, warnings, preserve_color)
+    warnings.append(f"Unknown MESH_METHOD={mesh_method}; falling back to printable_metric.")
+    printable, printable_method = try_open3d_printable_mesh(
+        points, colors, output_dir, warnings, preserve_color, "printable_alpha"
+    )
     if printable:
-        return printable, None, "printable_alpha"
+        return printable, None, printable_method
     tsdf = try_open3d_tsdf(root, frames, output_dir, warnings, preserve_color, object_masks)
     return tsdf, tsdf, "object_tsdf" if tsdf else None
 
 
-def try_open3d_printable_alpha_mesh(
+def try_open3d_printable_mesh(
     points: np.ndarray,
     colors: np.ndarray,
     output_dir: Path,
     warnings: list[str],
     preserve_color: bool = True,
-) -> Path | None:
+    requested_method: str = "printable_alpha",
+) -> tuple[Path | None, str | None]:
     try:
         import open3d as o3d  # type: ignore
     except Exception:
         _append_warning_once(warnings, "Open3D is not installed; wrote point-cloud baseline only.")
-        return None
+        return None, None
 
     finite = np.isfinite(points).all(axis=1) if points.size else np.empty((0,), dtype=bool)
     points = points[finite]
     colors = colors[finite] if colors.shape[0] == finite.shape[0] else np.empty((0, 3), dtype=np.uint8)
+    points, colors = _trim_printable_outliers(points, colors)
     minimum_points = _env_int("OBJECT_PRINTABLE_MIN_POINTS", 80)
     if points.shape[0] < minimum_points:
         warnings.append(f"Printable mesh skipped: only {points.shape[0]} object points.")
-        return None
+        return None, None
 
     try:
         pcd = o3d.geometry.PointCloud()
@@ -224,28 +255,37 @@ def try_open3d_printable_alpha_mesh(
             )
         if len(pcd.points) < minimum_points:
             warnings.append(f"Printable mesh skipped after outlier removal: only {len(pcd.points)} object points.")
-            return None
+            return None, None
 
         alpha = _printable_alpha_radius(pcd)
         candidates = [alpha, alpha * 1.25, alpha * 1.5, alpha * 2.0]
-        mesh = _best_alpha_mesh(o3d, pcd, candidates)
-        if mesh is None or len(mesh.triangles) == 0:
-            warnings.append("Printable alpha mesh skipped: alpha shape produced no triangles.")
-            return None
+        mesh_candidates: list[tuple[str, object]] = []
+        if requested_method not in {"poisson"}:
+            alpha_mesh = _best_alpha_mesh(o3d, pcd, candidates)
+            if alpha_mesh is not None and len(alpha_mesh.triangles):
+                mesh_candidates.append(("printable_alpha", alpha_mesh))
+        if requested_method not in {"printable_alpha", "alpha", "alpha_shape"}:
+            poisson_mesh = _poisson_mesh(o3d, pcd)
+            if poisson_mesh is not None and len(poisson_mesh.triangles):
+                mesh_candidates.append(("printable_poisson", poisson_mesh))
+        if not mesh_candidates:
+            warnings.append("Printable mesh skipped: alpha shape and Poisson produced no triangles.")
+            return None, None
 
+        method, mesh = min(mesh_candidates, key=lambda candidate: _mesh_fidelity_score(candidate[1], pcd))
         mesh = _postprocess_printable_mesh(mesh, pcd, o3d)
         if preserve_color and len(mesh.vertices) and pcd.has_colors():
             _transfer_nearest_colors(mesh, pcd, o3d)
         output = output_dir / "scan_object_printable_mesh.ply"
         if not o3d.io.write_triangle_mesh(str(output), mesh, write_ascii=True):
             warnings.append("Printable alpha mesh export failed; wrote point-cloud baseline only.")
-            return None
+            return None, None
         if not mesh.is_watertight():
             warnings.append("Printable alpha mesh is not watertight; it may need repair before 3D printing.")
-        return output
+        return output, method
     except Exception as exc:  # noqa: BLE001 - printable mesh is a best-effort path.
-        warnings.append(f"Printable alpha mesh skipped: {exc}")
-        return None
+        warnings.append(f"Printable mesh skipped: {exc}")
+        return None, None
 
 
 def try_open3d_tsdf(
@@ -348,7 +388,7 @@ def _env_float(name: str, default: float) -> float:
 
 
 def _mesh_method() -> str:
-    return os.environ.get("MESH_METHOD", "printable_alpha").strip().lower()
+    return os.environ.get("MESH_METHOD", "printable_metric").strip().lower()
 
 
 def _postprocess_open3d_mesh(mesh, o3d):  # noqa: ANN001, ANN201 - Open3D runtime type.
@@ -397,9 +437,26 @@ def _printable_alpha_radius(pcd) -> float:  # noqa: ANN001
     return float(np.clip(radius, lower, upper))
 
 
+def _trim_printable_outliers(points: np.ndarray, colors: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    trim_percent = _env_float("OBJECT_PRINTABLE_TRIM_PERCENT", 1.0)
+    if trim_percent <= 0 or trim_percent >= 10 or points.shape[0] < 200:
+        return points, colors
+    lower = np.percentile(points, trim_percent, axis=0)
+    upper = np.percentile(points, 100.0 - trim_percent, axis=0)
+    padding = np.maximum(
+        (upper - lower) * _env_float("OBJECT_PRINTABLE_TRIM_PADDING_FRACTION", 0.02),
+        _env_float("OBJECT_PRINTABLE_TRIM_PADDING_METERS", 0.0015),
+    )
+    keep = ((points >= lower - padding) & (points <= upper + padding)).all(axis=1)
+    minimum_kept = max(80, int(points.shape[0] * 0.8))
+    if int(keep.sum()) < minimum_kept:
+        return points, colors
+    return points[keep], colors[keep]
+
+
 def _best_alpha_mesh(o3d, pcd, alpha_candidates: list[float]):  # noqa: ANN001, ANN201
     best = None
-    best_score = (-1, -1, -1, -1)
+    best_score = float("inf")
     for alpha in alpha_candidates:
         if alpha <= 0:
             continue
@@ -419,16 +476,68 @@ def _best_alpha_mesh(o3d, pcd, alpha_candidates: list[float]):  # noqa: ANN001, 
         except Exception:
             pass
         mesh.compute_vertex_normals()
-        score = (
-            int(mesh.is_watertight()),
-            int(mesh.is_edge_manifold()),
-            int(mesh.is_vertex_manifold()),
-            len(mesh.triangles),
-        )
-        if score > best_score:
+        score = _mesh_fidelity_score(mesh, pcd)
+        if score < best_score:
             best = mesh
             best_score = score
     return best
+
+
+def _poisson_mesh(o3d, pcd):  # noqa: ANN001, ANN201
+    points = np.asarray(pcd.points)
+    if points.shape[0] < _env_int("OBJECT_POISSON_MIN_POINTS", 250):
+        return None
+    distances = np.asarray(pcd.compute_nearest_neighbor_distance())
+    finite = distances[np.isfinite(distances) & (distances > 0)]
+    radius = float(np.median(finite)) * 5.0 if finite.size else 0.02
+    pcd.estimate_normals(
+        search_param=o3d.geometry.KDTreeSearchParamHybrid(
+            radius=max(radius, 0.005),
+            max_nn=_env_int("OBJECT_POISSON_NORMAL_NEIGHBORS", 30),
+        )
+    )
+    try:
+        pcd.orient_normals_consistent_tangent_plane(_env_int("OBJECT_POISSON_ORIENT_NEIGHBORS", 20))
+    except Exception:
+        pass
+    mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
+        pcd,
+        depth=_env_int("OBJECT_POISSON_DEPTH", 8),
+        scale=_env_float("OBJECT_POISSON_SCALE", 1.05),
+        linear_fit=True,
+    )
+    density_values = np.asarray(densities)
+    if density_values.size:
+        cutoff = np.quantile(density_values, _env_float("OBJECT_POISSON_DENSITY_TRIM", 0.03))
+        mesh.remove_vertices_by_mask((density_values < cutoff).tolist())
+
+    bbox = pcd.get_axis_aligned_bounding_box()
+    extent = np.asarray(bbox.get_extent())
+    padding = np.maximum(extent * _env_float("OBJECT_POISSON_CROP_PADDING", 0.04), 0.002)
+    crop = o3d.geometry.AxisAlignedBoundingBox(
+        np.asarray(bbox.min_bound) - padding,
+        np.asarray(bbox.max_bound) + padding,
+    )
+    return mesh.crop(crop)
+
+
+def _mesh_fidelity_score(mesh, pcd) -> float:  # noqa: ANN001
+    if len(mesh.triangles) == 0 or len(mesh.vertices) == 0:
+        return float("inf")
+    sample_count = min(12000, max(1000, len(pcd.points) * 2))
+    sampled = mesh.sample_points_uniformly(number_of_points=sample_count)
+    mesh_to_cloud = np.asarray(sampled.compute_point_cloud_distance(pcd))
+    cloud_to_mesh = np.asarray(pcd.compute_point_cloud_distance(sampled))
+    extent = np.asarray(pcd.get_axis_aligned_bounding_box().get_extent())
+    diagonal = max(float(np.linalg.norm(extent)), 1e-6)
+    distances = np.concatenate([mesh_to_cloud, cloud_to_mesh])
+    finite = distances[np.isfinite(distances)]
+    if finite.size == 0:
+        return float("inf")
+    score = (float(np.median(finite)) + 0.25 * float(np.percentile(finite, 90))) / diagonal
+    if not mesh.is_watertight():
+        score += _env_float("OBJECT_MESH_OPEN_SURFACE_PENALTY", 0.015)
+    return score
 
 
 def _postprocess_printable_mesh(mesh, pcd, o3d):  # noqa: ANN001, ANN201

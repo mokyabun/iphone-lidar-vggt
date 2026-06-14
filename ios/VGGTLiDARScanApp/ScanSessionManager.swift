@@ -124,6 +124,8 @@ final class ScanSessionManager: NSObject, ObservableObject {
             resultURL = result.outputURL
             if let metrics = result.metrics, metrics.finalOutputType == "mesh", metrics.meshFaces > 0 {
                 statusText = "Mesh ready"
+            } else if result.metrics?.finalOutputSource == "lidar_metric" {
+                statusText = "Metric points ready"
             } else if runVGGT, let metrics = result.metrics, metrics.vggtPoints > 0 {
                 statusText = "VGGT ready"
             } else {

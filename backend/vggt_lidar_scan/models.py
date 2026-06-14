@@ -47,11 +47,14 @@ class ReconstructionMetrics(BaseModel):
     frame_count: int
     selected_keyframes: int
     lidar_points: int
+    lidar_raw_points: int = 0
+    lidar_removed_points: int = 0
     vggt_points: int = 0
     mesh_vertices: int = 0
     mesh_faces: int = 0
     mesh_method: str | None = None
     final_output_type: Literal["point_cloud", "mesh"] = "point_cloud"
+    final_output_source: str = "lidar"
     object_mask_backend: str | None = None
     camera_path_m: float | None = None
     camera_extent_m: list[float] | None = None

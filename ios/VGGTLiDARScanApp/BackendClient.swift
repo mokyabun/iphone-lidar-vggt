@@ -63,11 +63,14 @@ struct BackendMetrics: Decodable {
     let frameCount: Int
     let selectedKeyframes: Int
     let lidarPoints: Int
+    let lidarRawPoints: Int?
+    let lidarRemovedPoints: Int?
     let vggtPoints: Int
     let meshVertices: Int
     let meshFaces: Int
     let meshMethod: String?
     let finalOutputType: String
+    let finalOutputSource: String?
     let objectMaskBackend: String?
     let cameraPathM: Double?
     let cameraExtentM: [Double]?
