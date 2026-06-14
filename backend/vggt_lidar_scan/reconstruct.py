@@ -11,6 +11,7 @@ from .io import open_scan_package, read_confidence, read_depth, read_frames, rea
 from .models import FrameRecord, ReconstructionMetrics
 from .ply import count_ply_elements, write_point_cloud_ply
 from .point_cloud import clean_point_cloud, temporal_consistency_filter
+from .reconviagen import run_reconviagen
 from .segmentation import object_mask
 from .vggt_adapter import run_vggt
 
@@ -25,12 +26,15 @@ def reconstruct_scan(
     preserve_color: bool = True,
     extract_object: bool = False,
     reconstruct_mesh: bool = False,
+    ai_mesh: bool = False,
 ) -> ReconstructionMetrics:
     max_frames = _env_int("SCAN_MAX_FRAMES", max_frames)
     stride = _env_int("SCAN_STRIDE", stride)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     warnings: list[str] = []
+    extract_object = extract_object or ai_mesh
+    reconstruct_mesh = reconstruct_mesh or ai_mesh
     object_mask_backend = os.environ.get("OBJECT_MASK_BACKEND", "sam3_depth") if extract_object else None
 
     with open_scan_package(Path(package_path)) as root:
@@ -38,7 +42,7 @@ def reconstruct_scan(
         selected = [frames[index] for index in keyframe_indices(len(frames), max_frames)]
         print(
             f"[reconstruct] frames={len(frames)} selected={len(selected)} "
-            f"vggt={run_vggt_stage} object={extract_object} mesh={reconstruct_mesh}",
+            f"vggt={run_vggt_stage} object={extract_object} mesh={reconstruct_mesh} ai_mesh={ai_mesh}",
             flush=True,
         )
         object_masks = build_object_masks(root, selected) if extract_object else None
@@ -52,7 +56,7 @@ def reconstruct_scan(
 
         run_mesh = reconstruct_mesh or _env_bool("SCAN_RUN_TSDF", False)
         mesh_method = _mesh_method() if run_mesh else None
-        mesh_output, tsdf_output, actual_mesh_method = build_mesh_output(
+        metric_mesh_output, tsdf_output, actual_mesh_method = build_mesh_output(
             root,
             selected,
             output_dir,
@@ -63,6 +67,24 @@ def reconstruct_scan(
             object_masks,
             mesh_method,
         ) if run_mesh else (None, None, None)
+        mesh_output = metric_mesh_output
+        ai_mesh_output: Path | None = None
+        ai_mesh_used = False
+        if ai_mesh:
+            try:
+                ai_mesh_output = run_reconviagen(
+                    root,
+                    selected,
+                    output_dir,
+                    points,
+                    object_masks,
+                    preserve_color,
+                )
+                mesh_output = ai_mesh_output
+                actual_mesh_method = "reconviagen_v05_metric_aligned"
+                ai_mesh_used = True
+            except Exception as exc:  # noqa: BLE001 - retain the metric mesh fallback.
+                warnings.append(f"AI mesh skipped: {exc}")
         vggt_output: Path | None = None
         vggt_points = 0
         if run_vggt_stage:
@@ -105,6 +127,8 @@ def reconstruct_scan(
         mesh_method=actual_mesh_method if mesh_faces else None,
         final_output_type="mesh" if mesh_faces else "point_cloud",
         final_output_source=final_output_source,
+        ai_mesh_requested=ai_mesh,
+        ai_mesh_used=ai_mesh_used,
         object_mask_backend=object_mask_backend,
         camera_path_m=_camera_path_m(frames),
         camera_extent_m=_camera_extent_m(frames),
@@ -117,6 +141,8 @@ def reconstruct_scan(
         final_output=str(final_output),
         lidar_output=str(lidar_output),
         mesh_output=str(mesh_output) if mesh_output else None,
+        metric_mesh_output=str(metric_mesh_output) if metric_mesh_output else None,
+        ai_mesh_output=str(ai_mesh_output) if ai_mesh_output else None,
         tsdf_output=str(tsdf_output) if tsdf_output else None,
         vggt_output=str(vggt_output) if vggt_output else None,
         warnings=warnings,

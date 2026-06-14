@@ -9,8 +9,11 @@ APP_PORT="${APP_PORT:-8000}"
 APP_UPDATE_MODE="${APP_UPDATE_MODE:-reset}"
 APP_INSTALL_EXTRAS="${APP_INSTALL_EXTRAS:-reconstruction,vggt,segmentation}"
 APP_INSTALL_APT="${APP_INSTALL_APT:-1}"
-APP_PREPARE_VGGT="${APP_PREPARE_VGGT:-1}"
-APP_PREFETCH_VGGT="${APP_PREFETCH_VGGT:-1}"
+APP_PREPARE_VGGT="${APP_PREPARE_VGGT:-0}"
+APP_PREFETCH_VGGT="${APP_PREFETCH_VGGT:-0}"
+APP_PREPARE_RECONVIAGEN="${APP_PREPARE_RECONVIAGEN:-1}"
+APP_PREFETCH_RECONVIAGEN="${APP_PREFETCH_RECONVIAGEN:-1}"
+RECONVIAGEN_PRELOAD="${RECONVIAGEN_PRELOAD:-1}"
 PYTHON_BIN="${PYTHON_BIN:-}"
 
 export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
@@ -25,6 +28,22 @@ export TORCH_NUM_INTEROP_THREADS="${TORCH_NUM_INTEROP_THREADS:-1}"
 export VGGT_AUTO_DOWNLOAD="${VGGT_AUTO_DOWNLOAD:-1}"
 export VGGT_CACHE_ROOT="${VGGT_CACHE_ROOT:-/workspace/cache/vggt-lidar}"
 export HF_HOME="${HF_HOME:-/workspace/cache/vggt-lidar/huggingface}"
+export RECONVIAGEN_REPO_URL="${RECONVIAGEN_REPO_URL:-https://github.com/GAP-LAB-CUHK-SZ/ReconViaGen.git}"
+export RECONVIAGEN_REPO_REF="${RECONVIAGEN_REPO_REF:-v0.5}"
+export RECONVIAGEN_REPO_DIR="${RECONVIAGEN_REPO_DIR:-/workspace/cache/ReconViaGen}"
+export RECONVIAGEN_ENV="${RECONVIAGEN_ENV:-/workspace/cache/reconviagen-v05-env}"
+export RECONVIAGEN_PYTHON="${RECONVIAGEN_PYTHON:-${RECONVIAGEN_ENV}/bin/python}"
+export RECONVIAGEN_WORKER_PORT="${RECONVIAGEN_WORKER_PORT:-8011}"
+export RECONVIAGEN_MAX_IMAGES="${RECONVIAGEN_MAX_IMAGES:-6}"
+export RECONVIAGEN_PIPELINE_TYPE="${RECONVIAGEN_PIPELINE_TYPE:-1024_cascade}"
+export RECONVIAGEN_SS_SOURCE="${RECONVIAGEN_SS_SOURCE:-mesh}"
+export RECONVIAGEN_LOW_VRAM="${RECONVIAGEN_LOW_VRAM:-1}"
+export RECONVIAGEN_DECIMATION_TARGET="${RECONVIAGEN_DECIMATION_TARGET:-500000}"
+export RECONVIAGEN_TEXTURE_SIZE="${RECONVIAGEN_TEXTURE_SIZE:-2048}"
+export RECONVIAGEN_TIMEOUT_SECONDS="${RECONVIAGEN_TIMEOUT_SECONDS:-2400}"
+export RECONVIAGEN_WORKER_ERROR="${RECONVIAGEN_WORKER_ERROR:-/workspace/cache/reconviagen-worker.error}"
+export MICROMAMBA_BIN="${MICROMAMBA_BIN:-/workspace/cache/bin/micromamba}"
+export MAMBA_ROOT_PREFIX="${MAMBA_ROOT_PREFIX:-/workspace/cache/micromamba}"
 export YOLO_CONFIG_DIR="${YOLO_CONFIG_DIR:-/workspace/cache/ultralytics}"
 export ULTRALYTICS_SETTINGS="${ULTRALYTICS_SETTINGS:-/workspace/cache/ultralytics/settings.json}"
 export SCAN_MAX_FRAMES="${SCAN_MAX_FRAMES:-24}"
@@ -32,7 +51,7 @@ export SCAN_STRIDE="${SCAN_STRIDE:-4}"
 export SCAN_RUN_TSDF="${SCAN_RUN_TSDF:-0}"
 export MESH_METHOD="${MESH_METHOD:-printable_metric}"
 export VGGT_MAX_IMAGES="${VGGT_MAX_IMAGES:-12}"
-export VGGT_PRELOAD="${VGGT_PRELOAD:-1}"
+export VGGT_PRELOAD="${VGGT_PRELOAD:-0}"
 export VGGT_AS_FINAL="${VGGT_AS_FINAL:-0}"
 export OBJECT_MASK_BACKEND="${OBJECT_MASK_BACKEND:-sam3_depth}"
 export OBJECT_SAM_MODEL="${OBJECT_SAM_MODEL:-sam3.pt}"
@@ -103,8 +122,12 @@ install_system_packages() {
     ca-certificates \
     curl \
     git \
+    build-essential \
+    ffmpeg \
     libgl1 \
-    libglib2.0-0
+    libglib2.0-0 \
+    libjpeg-dev \
+    ninja-build
   run_as_root rm -rf /var/lib/apt/lists/*
 }
 
@@ -113,10 +136,15 @@ prepare_cache_dirs() {
   mkdir -p \
     "${VGGT_CACHE_ROOT}" \
     "${HF_HOME}" \
+    "${RECONVIAGEN_REPO_DIR}" \
+    "${RECONVIAGEN_ENV}" \
+    "$(dirname "${MICROMAMBA_BIN}")" \
+    "${MAMBA_ROOT_PREFIX}" \
     "${YOLO_CONFIG_DIR}" \
     "${YOLO_CONFIG_DIR}/Ultralytics" \
     "$(dirname "${ULTRALYTICS_SETTINGS}")"
-  chmod -R a+rwX "${VGGT_CACHE_ROOT}" "${YOLO_CONFIG_DIR}" || true
+  chmod -R a+rwX "${VGGT_CACHE_ROOT}" "${RECONVIAGEN_REPO_DIR}" "${RECONVIAGEN_ENV}" \
+    "${MAMBA_ROOT_PREFIX}" "${YOLO_CONFIG_DIR}" || true
 }
 
 backup_non_git_dir() {
@@ -189,6 +217,79 @@ prepare_vggt() {
   fi
 }
 
+prepare_reconviagen() {
+  if [ "${APP_PREPARE_RECONVIAGEN}" != "1" ]; then
+    log "Skipping ReconViaGen preparation."
+    return 0
+  fi
+
+  if [ ! -x "${MICROMAMBA_BIN}" ]; then
+    log "Installing micromamba."
+    curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xj -C "$(dirname "${MICROMAMBA_BIN}")" --strip-components=1 bin/micromamba
+    chmod +x "${MICROMAMBA_BIN}"
+  fi
+
+  if [ -d "${RECONVIAGEN_REPO_DIR}/.git" ]; then
+    log "Updating ReconViaGen ${RECONVIAGEN_REPO_REF}."
+    git -C "${RECONVIAGEN_REPO_DIR}" fetch --depth 1 origin "${RECONVIAGEN_REPO_REF}"
+    git -C "${RECONVIAGEN_REPO_DIR}" reset --hard FETCH_HEAD
+    git -C "${RECONVIAGEN_REPO_DIR}" submodule update --init --recursive
+  else
+    log "Cloning ReconViaGen ${RECONVIAGEN_REPO_REF}."
+    rm -rf "${RECONVIAGEN_REPO_DIR}"
+    git clone --recursive --depth 1 --branch "${RECONVIAGEN_REPO_REF}" \
+      "${RECONVIAGEN_REPO_URL}" "${RECONVIAGEN_REPO_DIR}"
+  fi
+
+  local revision
+  local installed_revision=""
+  revision="$(git -C "${RECONVIAGEN_REPO_DIR}" rev-parse HEAD)"
+  if [ -f "${RECONVIAGEN_ENV}/.reconviagen-revision" ]; then
+    installed_revision="$(<"${RECONVIAGEN_ENV}/.reconviagen-revision")"
+  fi
+  if [ ! -x "${RECONVIAGEN_PYTHON}" ] || [ "${installed_revision}" != "${revision}" ]; then
+    log "Creating the isolated ReconViaGen environment."
+    rm -rf "${RECONVIAGEN_ENV}"
+    "${MICROMAMBA_BIN}" create -y -p "${RECONVIAGEN_ENV}" \
+      python=3.10 pytorch=2.4.0 torchvision=0.19.0 pytorch-cuda=12.1 \
+      -c pytorch -c nvidia -c conda-forge
+    "${MICROMAMBA_BIN}" run -p "${RECONVIAGEN_ENV}" pip install \
+      pillow imageio imageio-ffmpeg tqdm easydict opencv-python-headless scipy ninja \
+      rembg onnxruntime trimesh open3d xatlas pyvista pymeshfix igraph lpips \
+      kornia==0.8.2 huggingface_hub==0.36.2 transformers==4.57.1 \
+      zstandard rtree fast-simplification
+    "${MICROMAMBA_BIN}" run -p "${RECONVIAGEN_ENV}" pip install \
+      git+https://github.com/EasternJournalist/utils3d.git@9a4eb15e4021b67b12c460c7057d642626897ec8
+    rm -rf /tmp/extensions
+    "${MICROMAMBA_BIN}" run -p "${RECONVIAGEN_ENV}" bash -c \
+      "cd '${RECONVIAGEN_REPO_DIR}' && . ./setup.sh --xformers --flash-attn --cumesh --o-voxel --flexgemm --nvdiffrec --spconv --kaolin --nvdiffrast"
+    printf '%s\n' "${revision}" > "${RECONVIAGEN_ENV}/.reconviagen-revision"
+  else
+    log "ReconViaGen environment is already current."
+  fi
+
+  if [ "${APP_PREFETCH_RECONVIAGEN}" = "1" ]; then
+    log "Prefetching ReconViaGen and TRELLIS.2 weights."
+    "${MICROMAMBA_BIN}" run -p "${RECONVIAGEN_ENV}" python -c \
+      "from huggingface_hub import snapshot_download; snapshot_download('Stable-X/trellis-vggt-v0-2'); snapshot_download('microsoft/TRELLIS.2-4B')"
+  fi
+}
+
+start_reconviagen_worker() {
+  if [ "${RECONVIAGEN_PRELOAD}" != "1" ] || [ ! -x "${RECONVIAGEN_PYTHON}" ]; then
+    return 0
+  fi
+  export RECONVIAGEN_WORKER_URL="http://127.0.0.1:${RECONVIAGEN_WORKER_PORT}"
+  rm -f "${RECONVIAGEN_WORKER_ERROR}"
+  log "Starting ReconViaGen worker on ${RECONVIAGEN_WORKER_URL}."
+  (
+    "${MICROMAMBA_BIN}" run -p "${RECONVIAGEN_ENV}" \
+      "${RECONVIAGEN_PYTHON}" "${APP_DIR}/backend/vggt_lidar_scan/reconviagen_worker.py" \
+      --host 127.0.0.1 --port "${RECONVIAGEN_WORKER_PORT}" \
+      || printf 'worker exited with status %s\n' "$?" > "${RECONVIAGEN_WORKER_ERROR}"
+  ) &
+}
+
 start_app() {
   cd "${APP_DIR}"
 
@@ -212,6 +313,8 @@ main() {
   sync_repo
   install_python_packages
   prepare_vggt
+  prepare_reconviagen
+  start_reconviagen_worker
   start_app "$@"
 }
 

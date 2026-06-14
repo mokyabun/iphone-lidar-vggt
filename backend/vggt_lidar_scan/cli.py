@@ -20,6 +20,7 @@ def main(
     preserve_color: bool = typer.Option(True, "--preserve-color/--no-preserve-color", help="Write RGB colors when available."),
     extract_object: bool = typer.Option(False, "--extract-object", help="Mask the central object before reconstruction."),
     reconstruct_mesh: bool = typer.Option(False, "--reconstruct-mesh", help="Run LiDAR TSDF mesh reconstruction."),
+    ai_mesh: bool = typer.Option(False, "--ai-mesh", help="Run ReconViaGen v0.5 multi-view mesh reconstruction."),
 ) -> None:
     metrics = reconstruct_scan(
         package,
@@ -31,6 +32,7 @@ def main(
         preserve_color=preserve_color,
         extract_object=extract_object,
         reconstruct_mesh=reconstruct_mesh,
+        ai_mesh=ai_mesh,
     )
     typer.echo(metrics.model_dump_json(indent=2))
 

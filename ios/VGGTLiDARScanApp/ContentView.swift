@@ -3,10 +3,11 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var scanner = ScanSessionManager()
     @AppStorage("backendBaseURL") private var backendBaseURL = "http://127.0.0.1:8000"
-    @AppStorage("runVGGT") private var runVGGT = true
+    @AppStorage("runVGGT") private var runVGGT = false
     @AppStorage("preserveColor") private var preserveColor = true
     @AppStorage("extractObject") private var extractObject = true
     @AppStorage("reconstructMesh") private var reconstructMesh = false
+    @AppStorage("aiMesh") private var aiMesh = false
     @State private var showResult = false
 
     var body: some View {
@@ -51,6 +52,19 @@ struct ContentView: View {
                 .toggleStyle(.switch)
                 .tint(.green)
 
+                Toggle(isOn: $aiMesh) {
+                    Label("ReconViaGen", systemImage: "wand.and.stars")
+                }
+                .toggleStyle(.switch)
+                .tint(.pink)
+                .onChange(of: aiMesh) {
+                    if aiMesh {
+                        runVGGT = false
+                        extractObject = true
+                        reconstructMesh = true
+                    }
+                }
+
                 if let errorText = scanner.lastErrorText {
                     Text(errorText)
                         .font(.footnote)
@@ -86,7 +100,8 @@ struct ContentView: View {
                                     runVGGT: runVGGT,
                                     preserveColor: preserveColor,
                                     extractObject: extractObject,
-                                    reconstructMesh: reconstructMesh
+                                    reconstructMesh: reconstructMesh,
+                                    aiMesh: aiMesh
                                 )
                                 showResult = scanner.resultURL != nil
                             }

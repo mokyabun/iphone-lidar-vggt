@@ -75,6 +75,7 @@ Results include:
 
 - `scan_lidar_points.ply`
 - `scan_lidar_tsdf.ply` when Open3D TSDF succeeds
+- `scan_object_ai_mesh.ply` when ReconViaGen succeeds
 - `scan_vggt_points.ply` when VGGT succeeds
 - `scan_final.ply`
 - `metrics.json`
@@ -133,11 +134,14 @@ APP_REPO_URL=https://github.com/mokyabun/iphone-lidar-vggt.git
 APP_REPO_REF=main
 APP_DIR=/workspace/iphone-lidar-vggt
 APP_UPDATE_MODE=reset
-APP_PREPARE_VGGT=1
-APP_PREFETCH_VGGT=1
+APP_PREPARE_VGGT=0
+APP_PREFETCH_VGGT=0
 APP_INSTALL_EXTRAS=reconstruction,vggt,segmentation
+APP_PREPARE_RECONVIAGEN=1
+APP_PREFETCH_RECONVIAGEN=1
+RECONVIAGEN_PRELOAD=1
 VGGT_MAX_IMAGES=12
-VGGT_PRELOAD=1
+VGGT_PRELOAD=0
 SCAN_MAX_FRAMES=24
 SCAN_RUN_TSDF=0
 MESH_METHOD=object_tsdf
@@ -150,7 +154,7 @@ OBJECT_SAM_MODEL=sam3.pt
 Performance knobs:
 
 - `VGGT_MAX_IMAGES=12` limits VGGT input keyframes. Increase for quality, decrease for speed.
-- `VGGT_PRELOAD=1` loads the VGGT model when the API starts, so the first reconstruction request does not pay the model-load cost.
+- `VGGT_PRELOAD=0` avoids keeping the standalone VGGT model beside the larger ReconViaGen worker.
 - `SCAN_MAX_FRAMES=24` limits LiDAR baseline frames.
 - `SCAN_RUN_TSDF=0` skips the slower Open3D TSDF mesh stage. Set to `1` only when you specifically want TSDF output.
 - `OBJECT_MASK_BACKEND=sam3_depth` uses SAM 3 center-point segmentation refined by LiDAR depth, with depth-only fallback.
@@ -168,6 +172,43 @@ To skip VGGT checkpoint predownload for faster pod startup, set:
 ```bash
 APP_PREFETCH_VGGT=0
 ```
+
+## ReconViaGen AI Mesh
+
+The app's `ReconViaGen` option runs the public ReconViaGen v0.5 hybrid pipeline:
+
+1. Select up to six sharp, angularly diverse masked RGB views.
+2. Run ReconViaGen's VGGT-based sparse structure estimation.
+3. Generate 1024-cascade geometry and PBR appearance with TRELLIS.2.
+4. Remesh and texture the generated asset.
+5. Align its rotation, translation, and uniform scale to the metric LiDAR object points.
+6. Return an ASCII PLY triangle mesh that the iOS preview can render.
+
+The implementation fixes ReconViaGen's official recommended quality settings:
+`adaptive_guidance_weight`, `1024_cascade`, and `ss_source=mesh`. If generation
+fails, the existing printable metric LiDAR mesh remains the final result.
+
+The RunPod bootstrap installs ReconViaGen in a separate Python 3.10,
+PyTorch 2.4, CUDA 12.1 micromamba environment. The first startup downloads
+and compiles several CUDA extensions and can take a while. Later starts reuse
+the repository, environment, and model caches. The model worker is loaded once
+in the background and reused by reconstruction requests.
+
+Recommended A40 settings:
+
+```bash
+APP_PREPARE_RECONVIAGEN=1
+APP_PREFETCH_RECONVIAGEN=1
+RECONVIAGEN_PRELOAD=1
+RECONVIAGEN_MAX_IMAGES=6
+RECONVIAGEN_PIPELINE_TYPE=1024_cascade
+RECONVIAGEN_SS_SOURCE=mesh
+RECONVIAGEN_LOW_VRAM=1
+RECONVIAGEN_TEXTURE_SIZE=2048
+RECONVIAGEN_DECIMATION_TARGET=500000
+```
+
+Official project: `https://github.com/GAP-LAB-CUHK-SZ/ReconViaGen/tree/v0.5`
 
 ## Docker
 

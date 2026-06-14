@@ -8,14 +8,16 @@ struct BackendClient {
         runVGGT: Bool,
         preserveColor: Bool,
         extractObject: Bool,
-        reconstructMesh: Bool
+        reconstructMesh: Bool,
+        aiMesh: Bool
     ) async throws -> BackendReconstructionResult {
         var components = URLComponents(url: baseURL.appendingPathComponent("reconstruct"), resolvingAgainstBaseURL: false)
         components?.queryItems = [
             URLQueryItem(name: "run_vggt", value: runVGGT ? "true" : "false"),
             URLQueryItem(name: "preserve_color", value: preserveColor ? "true" : "false"),
             URLQueryItem(name: "extract_object", value: extractObject ? "true" : "false"),
-            URLQueryItem(name: "reconstruct_mesh", value: reconstructMesh ? "true" : "false")
+            URLQueryItem(name: "reconstruct_mesh", value: reconstructMesh ? "true" : "false"),
+            URLQueryItem(name: "ai_mesh", value: aiMesh ? "true" : "false")
         ]
         guard let url = components?.url else {
             throw URLError(.badURL)
@@ -24,7 +26,7 @@ struct BackendClient {
         let boundary = "Boundary-\(UUID().uuidString)"
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.timeoutInterval = 600
+        request.timeoutInterval = aiMesh ? 2_400 : 600
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 
         var body = Data()
@@ -35,8 +37,8 @@ struct BackendClient {
         body.appendString("\r\n--\(boundary)--\r\n")
 
         let configuration = URLSessionConfiguration.default
-        configuration.timeoutIntervalForRequest = 600
-        configuration.timeoutIntervalForResource = 900
+        configuration.timeoutIntervalForRequest = aiMesh ? 2_400 : 600
+        configuration.timeoutIntervalForResource = aiMesh ? 2_700 : 900
         let session = URLSession(configuration: configuration)
         let (data, response) = try await session.upload(for: request, from: body)
         guard let httpResponse = response as? HTTPURLResponse, (200..<300).contains(httpResponse.statusCode) else {
@@ -71,6 +73,8 @@ struct BackendMetrics: Decodable {
     let meshMethod: String?
     let finalOutputType: String
     let finalOutputSource: String?
+    let aiMeshRequested: Bool?
+    let aiMeshUsed: Bool?
     let objectMaskBackend: String?
     let cameraPathM: Double?
     let cameraExtentM: [Double]?
@@ -82,6 +86,8 @@ struct BackendMetrics: Decodable {
     let objectExtentM: [Double]?
     let warnings: [String]
     let meshOutput: String?
+    let metricMeshOutput: String?
+    let aiMeshOutput: String?
 }
 
 enum BackendError: LocalizedError {
