@@ -6,8 +6,8 @@ struct ContentView: View {
     @AppStorage("runVGGT") private var runVGGT = false
     @AppStorage("preserveColor") private var preserveColor = true
     @AppStorage("extractObject") private var extractObject = true
-    @AppStorage("reconstructMesh") private var reconstructMesh = false
-    @AppStorage("aiMesh") private var aiMesh = false
+    @AppStorage("reconstructMesh") private var reconstructMesh = true
+    @AppStorage("aiMesh") private var aiMesh = true
     @State private var showResult = false
 
     var body: some View {
@@ -77,7 +77,7 @@ struct ContentView: View {
                     Text(scaleText)
                         .font(.footnote.monospacedDigit())
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .lineLimit(2)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 

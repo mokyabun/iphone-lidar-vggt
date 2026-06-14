@@ -8,6 +8,7 @@ import numpy as np
 from fastapi.testclient import TestClient
 from PIL import Image
 
+from vggt_lidar_scan import api
 from vggt_lidar_scan.api import app
 
 
@@ -52,3 +53,20 @@ def test_reconstruct_endpoint_returns_ply(tmp_path: Path) -> None:
     assert metrics["mesh_faces"] == 0
     assert metrics["camera_path_m"] == 0.0
     assert metrics["lidar_extent_m"] is not None
+
+
+def test_generated_asset_endpoints_return_glb_and_stl(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(api, "RUN_ROOT", tmp_path)
+    output = tmp_path / "job" / "output"
+    output.mkdir(parents=True)
+    (output / "scan_object_preview.glb").write_bytes(b"glTF")
+    (output / "scan_object_print.stl").write_bytes(b"solid scan")
+    client = TestClient(app)
+
+    preview = client.get("/jobs/job/preview")
+    printable = client.get("/jobs/job/print")
+
+    assert preview.status_code == 200
+    assert preview.headers["content-type"] == "model/gltf-binary"
+    assert printable.status_code == 200
+    assert printable.headers["content-type"] == "model/stl"

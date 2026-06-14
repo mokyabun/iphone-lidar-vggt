@@ -71,6 +71,11 @@ class ReconstructionMetrics(BaseModel):
     mesh_output: str | None = None
     metric_mesh_output: str | None = None
     ai_mesh_output: str | None = None
+    preview_glb_output: str | None = None
+    print_stl_output: str | None = None
+    print_mesh_watertight: bool | None = None
+    alignment_rmse_m: float | None = None
+    alignment_scale: float | None = None
     tsdf_output: str | None = None
     vggt_output: str | None = None
     warnings: list[str] = Field(default_factory=list)

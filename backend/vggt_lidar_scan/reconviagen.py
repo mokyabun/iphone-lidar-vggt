@@ -8,6 +8,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -17,14 +18,25 @@ from .models import FrameRecord
 from .segmentation import resize_mask
 
 
+@dataclass(frozen=True)
+class ReconViaGenResult:
+    mesh_path: Path
+    preview_glb_path: Path
+    print_stl_path: Path | None
+    print_mesh_watertight: bool
+    alignment_rmse_m: float
+    alignment_scale: float
+
+
 def run_reconviagen(
     root: Path,
     frames: list[FrameRecord],
     output_dir: Path,
     lidar_points: np.ndarray,
+    scene_points: np.ndarray,
     object_masks: dict[str, np.ndarray] | None,
     preserve_color: bool,
-) -> Path:
+) -> ReconViaGenResult:
     if lidar_points.shape[0] < 80:
         raise RuntimeError("not enough metric LiDAR points for AI mesh alignment")
 
@@ -33,8 +45,17 @@ def run_reconviagen(
     raw_output = output_dir / "reconviagen_raw.glb"
     _generate_mesh(input_dir, raw_output)
     final_output = output_dir / "scan_object_ai_mesh.ply"
-    _convert_and_align_mesh(raw_output, final_output, lidar_points, preserve_color)
-    return final_output
+    preview_output = output_dir / "scan_object_preview.glb"
+    print_output = output_dir / "scan_object_print.stl"
+    return _convert_and_align_mesh(
+        raw_output,
+        final_output,
+        preview_output,
+        print_output,
+        lidar_points,
+        scene_points,
+        preserve_color,
+    )
 
 
 def prepare_multiview_input(
@@ -231,9 +252,12 @@ def _generate_mesh(input_dir: Path, output_path: Path) -> None:
 def _convert_and_align_mesh(
     source_path: Path,
     output_path: Path,
+    preview_glb_path: Path,
+    print_stl_path: Path,
     lidar_points: np.ndarray,
+    scene_points: np.ndarray,
     preserve_color: bool,
-) -> None:
+) -> ReconViaGenResult:
     try:
         import open3d as o3d  # type: ignore
         import trimesh
@@ -241,22 +265,32 @@ def _convert_and_align_mesh(
         raise RuntimeError(f"AI mesh conversion dependencies are unavailable: {exc}") from exc
 
     loaded = trimesh.load(source_path, force="scene")
-    if isinstance(loaded, trimesh.Scene):
-        geometries = [geometry for geometry in loaded.geometry.values() if isinstance(geometry, trimesh.Trimesh)]
-        if not geometries:
-            raise RuntimeError("ReconViaGen output did not contain triangle geometry")
-        mesh = trimesh.util.concatenate(geometries)
-    elif isinstance(loaded, trimesh.Trimesh):
-        mesh = loaded
-    else:
-        raise RuntimeError("ReconViaGen output format is unsupported")
+    mesh = _scene_to_mesh(loaded, trimesh)
     if mesh.vertices.shape[0] < 3 or mesh.faces.shape[0] < 1:
         raise RuntimeError("ReconViaGen output mesh was empty")
 
     sample_count = min(_env_int("AI_ALIGNMENT_SAMPLES", 2500), max(500, mesh.faces.shape[0] * 2))
     samples, _ = trimesh.sample.sample_surface(mesh, sample_count)
     transform = _best_metric_transform(np.asarray(samples), lidar_points)
+    aligned_samples = np.asarray(samples) @ transform[:3, :3] + transform[:3, 3]
+    transform, aligned_samples = _refine_metric_transform_icp(transform, aligned_samples, lidar_points)
+    alignment_rmse = _alignment_rmse(aligned_samples, lidar_points)
+    alignment_scale = float(np.cbrt(abs(np.linalg.det(transform[:3, :3]))))
     vertices = np.asarray(mesh.vertices) @ transform[:3, :3] + transform[:3, 3]
+    normalization = _object_asset_normalization(vertices, lidar_points, scene_points)
+    vertices = vertices + normalization
+    mesh.vertices = vertices
+    _clean_trimesh(mesh)
+    mesh.fix_normals()
+    vertices = np.asarray(mesh.vertices, dtype=np.float64)
+    if not preserve_color:
+        mesh.visual = trimesh.visual.ColorVisuals(
+            mesh=mesh,
+            vertex_colors=np.tile(np.array([[220, 220, 220, 255]], dtype=np.uint8), (vertices.shape[0], 1)),
+        )
+
+    preview_glb_path.parent.mkdir(parents=True, exist_ok=True)
+    mesh.export(preview_glb_path, file_type="glb")
 
     output_mesh = o3d.geometry.TriangleMesh()
     output_mesh.vertices = o3d.utility.Vector3dVector(vertices.astype(np.float64))
@@ -272,6 +306,186 @@ def _convert_and_align_mesh(
     output_mesh.compute_vertex_normals()
     if not o3d.io.write_triangle_mesh(str(output_path), output_mesh, write_ascii=True):
         raise RuntimeError("failed to export the aligned ReconViaGen mesh")
+
+    print_mesh, watertight = _prepare_print_mesh(mesh, trimesh)
+    actual_print_path: Path | None = None
+    if print_mesh is not None:
+        print_mesh.export(print_stl_path, file_type="stl")
+        actual_print_path = print_stl_path
+    return ReconViaGenResult(
+        mesh_path=output_path,
+        preview_glb_path=preview_glb_path,
+        print_stl_path=actual_print_path,
+        print_mesh_watertight=watertight,
+        alignment_rmse_m=round(alignment_rmse, 5),
+        alignment_scale=round(alignment_scale, 6),
+    )
+
+
+def _scene_to_mesh(loaded, trimesh):  # noqa: ANN001
+    if isinstance(loaded, trimesh.Trimesh):
+        return loaded.copy()
+    if not isinstance(loaded, trimesh.Scene):
+        raise RuntimeError("ReconViaGen output format is unsupported")
+    try:
+        mesh = loaded.to_geometry()
+        if isinstance(mesh, trimesh.Trimesh):
+            return mesh
+    except Exception:
+        pass
+    geometries = loaded.dump(concatenate=False)
+    meshes = [geometry for geometry in geometries if isinstance(geometry, trimesh.Trimesh)]
+    if not meshes:
+        raise RuntimeError("ReconViaGen output did not contain triangle geometry")
+    return trimesh.util.concatenate(meshes)
+
+
+def _refine_metric_transform_icp(
+    transform: np.ndarray,
+    aligned_source: np.ndarray,
+    target_points: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    source = _finite_subsample(aligned_source, _env_int("AI_ICP_SAMPLES", 3500))
+    target = _finite_subsample(target_points, _env_int("AI_ICP_TARGET_SAMPLES", 5000))
+    if source.shape[0] < 20 or target.shape[0] < 20:
+        return transform, aligned_source
+
+    target_diagonal = max(float(np.linalg.norm(_robust_extent(target))), 1e-4)
+    maximum_distance = _env_float("AI_ICP_MAX_DISTANCE_METERS", max(0.008, target_diagonal * 0.08))
+    iterations = _env_int("AI_ICP_ITERATIONS", 20)
+    current = source.copy()
+    refined = transform.copy()
+    best_score = _symmetric_distance_score(current, target)
+    for _ in range(iterations):
+        nearest_indices, distances = _nearest_matches(current, target)
+        finite = np.isfinite(distances)
+        if not np.any(finite):
+            break
+        adaptive = min(maximum_distance, float(np.percentile(distances[finite], 75)) * 1.5)
+        keep = finite & (distances <= max(adaptive, 0.002))
+        if np.count_nonzero(keep) < 12:
+            break
+        delta_rotation, delta_translation = _rigid_transform(current[keep], target[nearest_indices[keep]])
+        candidate = current @ delta_rotation + delta_translation
+        candidate_score = _symmetric_distance_score(candidate, target)
+        if candidate_score > best_score * 1.002:
+            break
+        current = candidate
+        refined[:3, :3] = refined[:3, :3] @ delta_rotation
+        refined[:3, 3] = refined[:3, 3] @ delta_rotation + delta_translation
+        if abs(best_score - candidate_score) < 1e-5:
+            best_score = candidate_score
+            break
+        best_score = candidate_score
+
+    all_aligned = aligned_source
+    delta_rotation = np.linalg.solve(transform[:3, :3], refined[:3, :3])
+    delta_translation = refined[:3, 3] - transform[:3, 3] @ delta_rotation
+    all_aligned = all_aligned @ delta_rotation + delta_translation
+    return refined, all_aligned
+
+
+def _rigid_transform(source: np.ndarray, target: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    source_center = source.mean(axis=0)
+    target_center = target.mean(axis=0)
+    covariance = (source - source_center).T @ (target - target_center)
+    u, _, vt = np.linalg.svd(covariance)
+    rotation = u @ vt
+    if np.linalg.det(rotation) < 0:
+        u[:, -1] *= -1
+        rotation = u @ vt
+    translation = target_center - source_center @ rotation
+    return rotation, translation
+
+
+def _nearest_matches(query: np.ndarray, reference: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    indices: list[np.ndarray] = []
+    distances: list[np.ndarray] = []
+    for start in range(0, query.shape[0], 256):
+        values = query[start : start + 256]
+        squared = ((values[:, None, :] - reference[None, :, :]) ** 2).sum(axis=2)
+        nearest = np.argmin(squared, axis=1)
+        indices.append(nearest)
+        distances.append(np.sqrt(squared[np.arange(nearest.shape[0]), nearest]))
+    return np.concatenate(indices), np.concatenate(distances)
+
+
+def _alignment_rmse(source: np.ndarray, target: np.ndarray) -> float:
+    distances = _nearest_distances(_finite_subsample(source, 4000), _finite_subsample(target, 5000))
+    finite = distances[np.isfinite(distances)]
+    return float(np.sqrt(np.mean(np.square(finite)))) if finite.size else float("nan")
+
+
+def _object_asset_normalization(
+    vertices: np.ndarray,
+    object_points: np.ndarray,
+    scene_points: np.ndarray,
+) -> np.ndarray:
+    object_values = _finite_subsample(object_points, 8000)
+    scene_values = _finite_subsample(scene_points, 12000)
+    center = np.median(object_values, axis=0)
+    mesh_bottom = float(np.percentile(vertices[:, 1], 1))
+    support_y = _support_plane_height(object_values, scene_values)
+    floor_y = support_y if support_y is not None and abs(support_y - mesh_bottom) < 0.01 else mesh_bottom
+    return np.array([-center[0], -floor_y, -center[2]], dtype=np.float64)
+
+
+def _support_plane_height(object_points: np.ndarray, scene_points: np.ndarray) -> float | None:
+    if object_points.shape[0] < 20 or scene_points.shape[0] < 50:
+        return None
+    lower = np.percentile(object_points, 2, axis=0)
+    upper = np.percentile(object_points, 98, axis=0)
+    xz_padding = np.maximum((upper[[0, 2]] - lower[[0, 2]]) * 0.2, 0.03)
+    object_bottom = float(np.percentile(object_points[:, 1], 2))
+    within_xz = (
+        (scene_points[:, 0] >= lower[0] - xz_padding[0])
+        & (scene_points[:, 0] <= upper[0] + xz_padding[0])
+        & (scene_points[:, 2] >= lower[2] - xz_padding[1])
+        & (scene_points[:, 2] <= upper[2] + xz_padding[1])
+    )
+    vertical_band = np.abs(scene_points[:, 1] - object_bottom) <= _env_float("AI_SUPPORT_BAND_METERS", 0.06)
+    candidates = scene_points[within_xz & vertical_band, 1]
+    if candidates.size < 20:
+        return None
+    return float(np.median(candidates))
+
+
+def _prepare_print_mesh(mesh, trimesh):  # noqa: ANN001
+    printable = mesh.copy()
+    printable.visual = trimesh.visual.ColorVisuals(mesh=printable)
+    components = printable.split(only_watertight=False)
+    if components:
+        printable = max(components, key=lambda component: float(component.area))
+    _clean_trimesh(printable)
+    try:
+        trimesh.repair.fill_holes(printable)
+        trimesh.repair.fix_normals(printable)
+    except Exception:
+        pass
+    if printable.is_watertight:
+        return printable, True
+
+    if not _env_bool("AI_PRINT_VOXEL_REPAIR", True):
+        return printable, False
+    extent = np.asarray(printable.extents, dtype=np.float64)
+    minimum_extent = float(np.min(extent[extent > 0])) if np.any(extent > 0) else 0.1
+    pitch = _env_float("AI_PRINT_VOXEL_METERS", max(0.0015, minimum_extent / 180.0))
+    try:
+        repaired = printable.voxelized(pitch=pitch).fill().marching_cubes
+        repaired.remove_unreferenced_vertices()
+        trimesh.repair.fix_normals(repaired)
+        return repaired, bool(repaired.is_watertight)
+    except Exception:
+        return printable, False
+
+
+def _clean_trimesh(mesh) -> None:  # noqa: ANN001
+    try:
+        valid_faces = np.asarray(mesh.unique_faces()) & np.asarray(mesh.nondegenerate_faces())
+        mesh.update_faces(valid_faces)
+    except Exception:
+        pass
+    mesh.remove_unreferenced_vertices()
 
 
 def _best_metric_transform(source_points: np.ndarray, target_points: np.ndarray) -> np.ndarray:
@@ -381,3 +595,10 @@ def _env_float(name: str, default: float) -> float:
         return float(value) if value else default
     except ValueError:
         return default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value not in {"0", "false", "False", "no", "No"}

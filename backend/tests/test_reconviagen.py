@@ -7,8 +7,11 @@ from PIL import Image
 
 from vggt_lidar_scan.models import FrameRecord
 from vggt_lidar_scan.reconviagen import (
+    _alignment_rmse,
     _best_metric_transform,
     _nearest_distances,
+    _object_asset_normalization,
+    _refine_metric_transform_icp,
     prepare_multiview_input,
 )
 
@@ -72,3 +75,37 @@ def test_prepare_multiview_input_writes_diverse_rgba_views(tmp_path: Path) -> No
     assert len(outputs) == 4
     assert all(Image.open(path).mode == "RGBA" for path in outputs)
     assert all(np.asarray(Image.open(path))[:, :, 3].max() == 255 for path in outputs)
+
+
+def test_icp_refinement_reduces_metric_alignment_error() -> None:
+    rng = np.random.default_rng(9)
+    target = rng.normal(size=(500, 3)) * np.array([0.08, 0.12, 0.05])
+    angle = np.deg2rad(5.0)
+    rotation = np.array(
+        [
+            [np.cos(angle), 0.0, np.sin(angle)],
+            [0.0, 1.0, 0.0],
+            [-np.sin(angle), 0.0, np.cos(angle)],
+        ]
+    )
+    source = target @ rotation + np.array([0.012, -0.006, 0.009])
+    initial = np.eye(4)
+
+    refined, aligned = _refine_metric_transform_icp(initial, source, target)
+
+    assert _alignment_rmse(aligned, target) < _alignment_rmse(source, target)
+    assert not np.allclose(refined, initial)
+
+
+def test_object_asset_normalization_centers_object_and_places_support_at_zero() -> None:
+    rng = np.random.default_rng(4)
+    object_points = rng.uniform([-0.1, 0.32, -0.08], [0.1, 0.55, 0.08], size=(400, 3))
+    support = rng.uniform([-0.13, 0.318, -0.11], [0.13, 0.322, 0.11], size=(300, 3))
+    vertices = object_points.copy()
+
+    offset = _object_asset_normalization(vertices, object_points, np.concatenate([object_points, support]))
+    normalized = vertices + offset
+
+    assert abs(np.median(normalized[:, 0])) < 0.01
+    assert abs(np.median(normalized[:, 2])) < 0.01
+    assert abs(0.32 + offset[1]) < 0.01

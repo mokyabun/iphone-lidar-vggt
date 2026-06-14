@@ -189,10 +189,17 @@ private extension BackendMetrics {
     var scaleSummary: String? {
         guard let extent = objectExtentM ?? lidarExtentM, extent.count == 3 else { return nil }
         let size = extent.map { String(format: "%.2f", $0) }.joined(separator: " x ")
-        if let cameraPathM {
-            return "Scale \(size) m · path \(String(format: "%.2f", cameraPathM)) m"
+        var details = ["Scale \(size) m"]
+        if let alignmentRmseM {
+            details.append("ICP \(String(format: "%.1f", alignmentRmseM * 1_000)) mm")
         }
-        return "Scale \(size) m"
+        if let printMeshWatertight {
+            details.append(printMeshWatertight ? "STL watertight" : "STL repair needed")
+        }
+        if let cameraPathM {
+            details.append("path \(String(format: "%.2f", cameraPathM)) m")
+        }
+        return details.joined(separator: " · ")
     }
 }
 

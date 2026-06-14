@@ -77,6 +77,9 @@ export VGGT_AS_FINAL="${VGGT_AS_FINAL:-0}"
 export OBJECT_MASK_BACKEND="${OBJECT_MASK_BACKEND:-sam3_depth}"
 export OBJECT_SAM_MODEL="${OBJECT_SAM_MODEL:-sam3.pt}"
 export OBJECT_SAM_MAX_FRAMES="${OBJECT_SAM_MAX_FRAMES:-3}"
+export OBJECT_MASK_PROPAGATION="${OBJECT_MASK_PROPAGATION:-1}"
+export OBJECT_PROPAGATION_ANCHORS="${OBJECT_PROPAGATION_ANCHORS:-2}"
+export OBJECT_PROPAGATION_DEPTH_TOLERANCE_METERS="${OBJECT_PROPAGATION_DEPTH_TOLERANCE_METERS:-0.08}"
 export OBJECT_CENTER_FRACTION="${OBJECT_CENTER_FRACTION:-0.35}"
 export OBJECT_DEPTH_BAND_METERS="${OBJECT_DEPTH_BAND_METERS:-0.35}"
 export OBJECT_MIN_MASK_RATIO="${OBJECT_MIN_MASK_RATIO:-0.002}"
@@ -105,6 +108,10 @@ export POINT_CLOUD_RADIUS_FACTOR="${POINT_CLOUD_RADIUS_FACTOR:-4.0}"
 export POINT_CLOUD_RADIUS_MIN_NEIGHBORS="${POINT_CLOUD_RADIUS_MIN_NEIGHBORS:-3}"
 export OBJECT_POISSON_DEPTH="${OBJECT_POISSON_DEPTH:-8}"
 export OBJECT_POISSON_DENSITY_TRIM="${OBJECT_POISSON_DENSITY_TRIM:-0.03}"
+export AI_ICP_ITERATIONS="${AI_ICP_ITERATIONS:-20}"
+export AI_ICP_MAX_DISTANCE_METERS="${AI_ICP_MAX_DISTANCE_METERS:-0.03}"
+export AI_PRINT_VOXEL_REPAIR="${AI_PRINT_VOXEL_REPAIR:-1}"
+export AI_PRINT_VOXEL_METERS="${AI_PRINT_VOXEL_METERS:-0.0015}"
 
 log() {
   printf '[run.sh] %s\n' "$*"
@@ -297,7 +304,7 @@ prepare_reconviagen() {
       -c pytorch -c nvidia -c conda-forge
     "${MICROMAMBA_BIN}" run -p "${RECONVIAGEN_ENV}" pip install \
       pillow imageio imageio-ffmpeg tqdm easydict opencv-python-headless scipy ninja \
-      rembg onnxruntime trimesh open3d xatlas pyvista pymeshfix igraph lpips \
+      scikit-image rembg onnxruntime trimesh open3d xatlas pyvista pymeshfix igraph lpips \
       kornia==0.8.2 timm==1.0.22 huggingface_hub==0.36.2 transformers==4.57.1 \
       zstandard rtree fast-simplification
     "${MICROMAMBA_BIN}" run -p "${RECONVIAGEN_ENV}" pip install \
@@ -319,6 +326,11 @@ prepare_reconviagen() {
   if ! "${RECONVIAGEN_PYTHON}" -c "import timm" >/dev/null 2>&1; then
     log "Installing the ReconViaGen timm runtime dependency."
     "${MICROMAMBA_BIN}" run -p "${RECONVIAGEN_ENV}" pip install "timm==1.0.22"
+  fi
+
+  if ! "${RECONVIAGEN_PYTHON}" -c "import scipy, skimage" >/dev/null 2>&1; then
+    log "Installing ReconViaGen print-mesh repair dependencies."
+    "${MICROMAMBA_BIN}" run -p "${RECONVIAGEN_ENV}" pip install "scipy>=1.13" "scikit-image>=0.24"
   fi
 
   if ! "${RECONVIAGEN_PYTHON}" -c \

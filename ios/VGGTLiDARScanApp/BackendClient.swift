@@ -88,6 +88,11 @@ struct BackendMetrics: Decodable {
     let meshOutput: String?
     let metricMeshOutput: String?
     let aiMeshOutput: String?
+    let previewGlbOutput: String?
+    let printStlOutput: String?
+    let printMeshWatertight: Bool?
+    let alignmentRmseM: Double?
+    let alignmentScale: Double?
 }
 
 enum BackendError: LocalizedError {

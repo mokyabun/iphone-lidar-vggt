@@ -129,6 +129,22 @@ def get_result(job_id: str) -> FileResponse:
     return FileResponse(result, filename="scan_final.ply")
 
 
+@app.get("/jobs/{job_id}/preview")
+def get_preview_asset(job_id: str) -> FileResponse:
+    result = RUN_ROOT / job_id / "output" / "scan_object_preview.glb"
+    if not result.exists():
+        raise HTTPException(status_code=404, detail="Preview GLB not found")
+    return FileResponse(result, filename="scan_object_preview.glb", media_type="model/gltf-binary")
+
+
+@app.get("/jobs/{job_id}/print")
+def get_print_asset(job_id: str) -> FileResponse:
+    result = RUN_ROOT / job_id / "output" / "scan_object_print.stl"
+    if not result.exists():
+        raise HTTPException(status_code=404, detail="Print STL not found")
+    return FileResponse(result, filename="scan_object_print.stl", media_type="model/stl")
+
+
 def _env_bool(name: str, default: bool) -> bool:
     value = os.environ.get(name)
     if value is None:

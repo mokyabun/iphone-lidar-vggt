@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from vggt_lidar_scan.reconviagen import ReconViaGenResult
 from vggt_lidar_scan.reconstruct import reconstruct_scan
 
 
@@ -187,14 +188,32 @@ def test_reconstruct_scan_uses_reconviagen_mesh(tmp_path: Path, monkeypatch) -> 
         "vggt_lidar_scan.reconstruct.build_mesh_output",
         lambda *args, **kwargs: (metric_mesh, None, "printable_alpha"),
     )
-    monkeypatch.setattr("vggt_lidar_scan.reconstruct.run_reconviagen", lambda *args, **kwargs: ai_mesh)
+    preview_glb = tmp_path / "preview.glb"
+    print_stl = tmp_path / "print.stl"
+    preview_glb.write_bytes(b"glTF")
+    print_stl.write_bytes(b"solid scan")
+    monkeypatch.setattr(
+        "vggt_lidar_scan.reconstruct.run_reconviagen",
+        lambda *args, **kwargs: ReconViaGenResult(
+            mesh_path=ai_mesh,
+            preview_glb_path=preview_glb,
+            print_stl_path=print_stl,
+            print_mesh_watertight=True,
+            alignment_rmse_m=0.004,
+            alignment_scale=0.125,
+        ),
+    )
 
     metrics = reconstruct_scan(package, tmp_path / "out", stride=1, ai_mesh=True)
 
     assert metrics.ai_mesh_used is True
-    assert metrics.final_output_source == "reconviagen_v05_metric_aligned"
+    assert metrics.final_output_source == "reconviagen_v05_lidar_icp"
     assert metrics.mesh_faces == 1
     assert metrics.ai_mesh_output == str(ai_mesh)
+    assert metrics.preview_glb_output == str(preview_glb)
+    assert metrics.print_stl_output == str(print_stl)
+    assert metrics.print_mesh_watertight is True
+    assert metrics.alignment_rmse_m == 0.004
 
 
 def _write_test_package(tmp_path: Path) -> Path:

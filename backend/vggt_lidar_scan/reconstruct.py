@@ -12,7 +12,7 @@ from .models import FrameRecord, ReconstructionMetrics
 from .ply import count_ply_elements, write_point_cloud_ply
 from .point_cloud import clean_point_cloud, temporal_consistency_filter
 from .reconviagen import run_reconviagen
-from .segmentation import object_mask
+from .segmentation import merge_propagated_mask, object_mask, propagate_object_mask
 from .vggt_adapter import run_vggt
 
 
@@ -69,20 +69,34 @@ def reconstruct_scan(
         ) if run_mesh else (None, None, None)
         mesh_output = metric_mesh_output
         ai_mesh_output: Path | None = None
+        preview_glb_output: Path | None = None
+        print_stl_output: Path | None = None
+        print_mesh_watertight: bool | None = None
+        alignment_rmse_m: float | None = None
+        alignment_scale: float | None = None
         ai_mesh_used = False
         if ai_mesh:
             try:
-                ai_mesh_output = run_reconviagen(
+                ai_result = run_reconviagen(
                     root,
                     selected,
                     output_dir,
                     points,
+                    lidar_points_all,
                     object_masks,
                     preserve_color,
                 )
+                ai_mesh_output = ai_result.mesh_path
+                preview_glb_output = ai_result.preview_glb_path
+                print_stl_output = ai_result.print_stl_path
+                print_mesh_watertight = ai_result.print_mesh_watertight
+                alignment_rmse_m = ai_result.alignment_rmse_m
+                alignment_scale = ai_result.alignment_scale
                 mesh_output = ai_mesh_output
-                actual_mesh_method = "reconviagen_v05_metric_aligned"
+                actual_mesh_method = "reconviagen_v05_lidar_icp"
                 ai_mesh_used = True
+                if print_mesh_watertight is False:
+                    warnings.append("AI print mesh is not watertight; repair it before 3D printing.")
             except Exception as exc:  # noqa: BLE001 - retain the metric mesh fallback.
                 warnings.append(f"AI mesh skipped: {exc}")
         vggt_output: Path | None = None
@@ -143,6 +157,11 @@ def reconstruct_scan(
         mesh_output=str(mesh_output) if mesh_output else None,
         metric_mesh_output=str(metric_mesh_output) if metric_mesh_output else None,
         ai_mesh_output=str(ai_mesh_output) if ai_mesh_output else None,
+        preview_glb_output=str(preview_glb_output) if preview_glb_output else None,
+        print_stl_output=str(print_stl_output) if print_stl_output else None,
+        print_mesh_watertight=print_mesh_watertight,
+        alignment_rmse_m=alignment_rmse_m,
+        alignment_scale=alignment_scale,
         tsdf_output=str(tsdf_output) if tsdf_output else None,
         vggt_output=str(vggt_output) if vggt_output else None,
         warnings=warnings,
@@ -195,16 +214,48 @@ def build_lidar_point_cloud(
 
 def build_object_masks(root: Path, frames: list[FrameRecord]) -> dict[str, np.ndarray]:
     masks: dict[str, np.ndarray] = {}
+    depths: dict[str, np.ndarray] = {}
     backend = os.environ.get("OBJECT_MASK_BACKEND", "sam3_depth").lower()
     sam_limit = _env_int("OBJECT_SAM_MAX_FRAMES", 3)
+    anchor_indices = set(
+        np.linspace(0, len(frames) - 1, min(sam_limit, len(frames)), dtype=int).tolist()
+    ) if frames else set()
     for index, frame in enumerate(frames):
-        allow_sam = backend in {"sam3", "sam3_depth"} and index < sam_limit
+        allow_sam = backend in {"sam3", "sam3_depth"} and index in anchor_indices
+        depth = read_depth(root, frame)
+        depths[frame.frame_id] = depth
         print(
             f"[reconstruct] object mask {index + 1}/{len(frames)} frame={frame.frame_id} "
             f"backend={backend if allow_sam else 'depth'}",
             flush=True,
         )
-        masks[frame.frame_id] = object_mask(root, frame, read_depth(root, frame), allow_sam=allow_sam)
+        masks[frame.frame_id] = object_mask(root, frame, depth, allow_sam=allow_sam)
+
+    if not _env_bool("OBJECT_MASK_PROPAGATION", True) or len(anchor_indices) < 1:
+        return masks
+
+    frame_indices = {frame.frame_id: index for index, frame in enumerate(frames)}
+    anchors = [frames[index] for index in sorted(anchor_indices)]
+    for target_index, target in enumerate(frames):
+        propagated: list[np.ndarray] = []
+        nearest_anchors = sorted(
+            anchors,
+            key=lambda anchor: abs(frame_indices[anchor.frame_id] - target_index),
+        )[: _env_int("OBJECT_PROPAGATION_ANCHORS", 2)]
+        for source in nearest_anchors:
+            if source.frame_id == target.frame_id:
+                propagated.append(masks[source.frame_id])
+                continue
+            projected = propagate_object_mask(
+                source,
+                depths[source.frame_id],
+                masks[source.frame_id],
+                target,
+                depths[target.frame_id],
+            )
+            if projected is not None:
+                propagated.append(projected)
+        masks[target.frame_id] = merge_propagated_mask(masks[target.frame_id], propagated)
     return masks
 
 

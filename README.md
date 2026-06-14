@@ -70,12 +70,16 @@ Endpoints:
 - `POST /jobs` multipart upload field: `scan_package`
 - `GET /jobs/{job_id}`
 - `GET /jobs/{job_id}/result`
+- `GET /jobs/{job_id}/preview` for the aligned PBR GLB
+- `GET /jobs/{job_id}/print` for the repaired STL
 
 Results include:
 
 - `scan_lidar_points.ply`
 - `scan_lidar_tsdf.ply` when Open3D TSDF succeeds
 - `scan_object_ai_mesh.ply` when ReconViaGen succeeds
+- `scan_object_preview.glb` with the aligned PBR material
+- `scan_object_print.stl` for 3D printing
 - `scan_vggt_points.ply` when VGGT succeeds
 - `scan_final.ply`
 - `metrics.json`
@@ -195,12 +199,17 @@ APP_PREFETCH_VGGT=0
 
 The app's `ReconViaGen` option runs the public ReconViaGen v0.5 hybrid pipeline:
 
-1. Select up to six sharp, angularly diverse masked RGB views.
-2. Run ReconViaGen's VGGT-based sparse structure estimation.
-3. Generate 1024-cascade geometry and PBR appearance with TRELLIS.2.
-4. Remesh and texture the generated asset.
-5. Align its rotation, translation, and uniform scale to the metric LiDAR object points.
-6. Return an ASCII PLY triangle mesh that the iOS preview can render.
+1. Select LiDAR keyframes across the full camera path.
+2. Segment evenly distributed SAM anchor frames and refine them with LiDAR depth.
+3. Reproject anchor masks through ARKit world coordinates to stabilize masks on neighboring frames.
+4. Filter the masked metric LiDAR cloud with temporal and spatial outlier removal.
+5. Select up to six sharp, angularly diverse object RGBA views.
+6. Run ReconViaGen's VGGT sparse-structure stage.
+7. Generate 1024-cascade geometry and PBR appearance with TRELLIS.2.
+8. Estimate rotation, translation, and uniform metric scale from the LiDAR object cloud.
+9. Refine that alignment with robust point-to-point ICP.
+10. Normalize the object to the ARKit up axis and detected support height.
+11. Export an ASCII colored PLY for the app, an aligned PBR GLB, and a repaired STL.
 
 The implementation fixes ReconViaGen's official recommended quality settings:
 `adaptive_guidance_weight`, `1024_cascade`, and `ss_source=mesh`. If generation
@@ -244,6 +253,11 @@ RECONVIAGEN_SS_SOURCE=mesh
 RECONVIAGEN_LOW_VRAM=1
 RECONVIAGEN_TEXTURE_SIZE=2048
 RECONVIAGEN_DECIMATION_TARGET=500000
+OBJECT_MASK_PROPAGATION=1
+AI_ICP_ITERATIONS=20
+AI_ICP_MAX_DISTANCE_METERS=0.03
+AI_PRINT_VOXEL_REPAIR=1
+AI_PRINT_VOXEL_METERS=0.0015
 ```
 
 Official project: `https://github.com/GAP-LAB-CUHK-SZ/ReconViaGen/tree/v0.5`
