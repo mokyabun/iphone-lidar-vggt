@@ -12,6 +12,12 @@ final class ScanSessionManager: NSObject, ObservableObject {
     @Published private(set) var statusText = "Checking LiDAR"
     @Published private(set) var lastPackageURL: URL?
     @Published private(set) var resultURL: URL?
+    @Published private(set) var resultJobID: String?
+    @Published private(set) var resultMetrics: BackendMetrics?
+    @Published private(set) var downloadedAssets: [BackendAssetKind: URL] = [:]
+    @Published private(set) var downloadingAssets: Set<BackendAssetKind> = []
+    @Published private(set) var backendCapabilities: BackendCapabilities?
+    @Published private(set) var isCheckingBackend = false
     @Published private(set) var isUploading = false
     @Published private(set) var lastErrorText: String?
     @Published private(set) var lastScaleText: String?
@@ -62,6 +68,10 @@ final class ScanSessionManager: NSObject, ObservableObject {
             capturedFrameCount = 0
             lastPackageURL = nil
             resultURL = nil
+            resultJobID = nil
+            resultMetrics = nil
+            downloadedAssets = [:]
+            downloadingAssets = []
             lastErrorText = nil
             lastScaleText = nil
             lastCaptureTimestamp = 0
@@ -96,14 +106,30 @@ final class ScanSessionManager: NSObject, ObservableObject {
         }
     }
 
-    func uploadLatestPackage(
-        backendBaseURL: String,
-        runVGGT: Bool,
-        preserveColor: Bool,
-        extractObject: Bool,
-        reconstructMesh: Bool,
-        aiMesh: Bool
-    ) async {
+    func refreshCapabilities(backendBaseURL: String) async {
+        guard let baseURL = URL(string: backendBaseURL) else {
+            backendCapabilities = nil
+            lastErrorText = "Invalid backend URL."
+            return
+        }
+        isCheckingBackend = true
+        defer { isCheckingBackend = false }
+        do {
+            backendCapabilities = try await BackendClient(baseURL: baseURL).capabilities()
+            if lastErrorText == "Backend unavailable." || lastErrorText == "Invalid backend URL." {
+                lastErrorText = nil
+            }
+        } catch {
+            backendCapabilities = nil
+            lastErrorText = "Backend unavailable."
+        }
+    }
+
+    func capability(for pipeline: ScanPipeline) -> PipelineCapability {
+        backendCapabilities?.capability(for: pipeline) ?? .unavailable
+    }
+
+    func uploadLatestPackage(backendBaseURL: String, options: ReconstructionOptions) async {
         guard let lastPackageURL else { return }
         guard let baseURL = URL(string: backendBaseURL) else {
             statusText = "Bad backend URL"
@@ -111,26 +137,27 @@ final class ScanSessionManager: NSObject, ObservableObject {
         }
 
         isUploading = true
-        statusText = "Uploading"
+        statusText = "Processing \(options.pipeline.title)"
         lastErrorText = nil
+        lastScaleText = nil
+        resultURL = nil
+        resultJobID = nil
+        resultMetrics = nil
+        downloadedAssets = [:]
+        downloadingAssets = []
         do {
             let client = BackendClient(baseURL: baseURL)
-            let result = try await client.reconstruct(
-                packageURL: lastPackageURL,
-                runVGGT: runVGGT,
-                preserveColor: preserveColor,
-                extractObject: extractObject,
-                reconstructMesh: reconstructMesh,
-                aiMesh: aiMesh
-            )
+            let result = try await client.reconstruct(packageURL: lastPackageURL, options: options)
             resultURL = result.outputURL
+            resultJobID = result.jobID
+            resultMetrics = result.metrics
             if result.metrics?.aiMeshUsed == true {
-                statusText = "ReconViaGen ready"
+                statusText = "AI mesh ready"
             } else if let metrics = result.metrics, metrics.finalOutputType == "mesh", metrics.meshFaces > 0 {
                 statusText = "Mesh ready"
             } else if result.metrics?.finalOutputSource == "lidar_metric" {
                 statusText = "Metric points ready"
-            } else if runVGGT, let metrics = result.metrics, metrics.vggtPoints > 0 {
+            } else if options.pipeline == .vggt, let metrics = result.metrics, metrics.vggtPoints > 0 {
                 statusText = "VGGT ready"
             } else {
                 statusText = "Result ready"
@@ -144,6 +171,32 @@ final class ScanSessionManager: NSObject, ObservableObject {
             lastErrorText = error.localizedDescription
         }
         isUploading = false
+    }
+
+    func assetURL(for kind: BackendAssetKind) -> URL? {
+        if kind == .result {
+            return resultURL
+        }
+        return downloadedAssets[kind]
+    }
+
+    func assetIsAvailable(_ kind: BackendAssetKind) -> Bool {
+        kind == .result ? resultURL != nil : resultMetrics?.supports(kind) == true
+    }
+
+    func downloadAsset(_ kind: BackendAssetKind, backendBaseURL: String) async {
+        guard kind != .result,
+              downloadedAssets[kind] == nil,
+              let jobID = resultJobID,
+              let baseURL = URL(string: backendBaseURL)
+        else { return }
+        downloadingAssets.insert(kind)
+        defer { downloadingAssets.remove(kind) }
+        do {
+            downloadedAssets[kind] = try await BackendClient(baseURL: baseURL).downloadAsset(jobID: jobID, kind: kind)
+        } catch {
+            lastErrorText = error.localizedDescription
+        }
     }
 }
 
@@ -185,7 +238,7 @@ extension ScanSessionManager: ARSessionDelegate {
     }
 }
 
-private extension BackendMetrics {
+extension BackendMetrics {
     var scaleSummary: String? {
         guard let extent = objectExtentM ?? lidarExtentM, extent.count == 3 else { return nil }
         let size = extent.map { String(format: "%.2f", $0) }.joined(separator: " x ")

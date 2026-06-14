@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import shutil
 import threading
 import time
+import urllib.error
+import urllib.request
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -34,6 +37,31 @@ app = FastAPI(title="VGGT iPhone LiDAR Scanner API", lifespan=lifespan)
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/capabilities")
+def capabilities() -> dict[str, object]:
+    vggt_available = bool(os.environ.get("VGGT_RUNNER")) or importlib.util.find_spec("vggt") is not None
+    ai_state, ai_reason = _reconviagen_state()
+    return {
+        "pipelines": {
+            "metric": {
+                "state": "available",
+                "options": ["color", "object", "mesh"],
+            },
+            "vggt": {
+                "state": "available" if vggt_available else "unavailable",
+                "reason": None if vggt_available else "VGGT runtime is not installed.",
+                "options": ["color", "object"],
+            },
+            "ai_mesh": {
+                "state": ai_state,
+                "reason": ai_reason,
+                "options": ["color", "object", "mesh", "preview_glb", "print_stl"],
+                "required_options": ["object", "mesh"],
+            },
+        }
+    }
 
 
 @app.post("/jobs")
@@ -150,6 +178,24 @@ def _env_bool(name: str, default: bool) -> bool:
     if value is None:
         return default
     return value not in {"0", "false", "False", "no", "No"}
+
+
+def _reconviagen_state() -> tuple[str, str | None]:
+    error_path = Path(os.environ.get("RECONVIAGEN_WORKER_ERROR", "/workspace/cache/reconviagen-worker.error"))
+    worker_url = os.environ.get("RECONVIAGEN_WORKER_URL")
+    if worker_url:
+        try:
+            with urllib.request.urlopen(worker_url.rstrip("/") + "/health", timeout=1) as response:
+                if response.status == 200:
+                    return "available", None
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            pass
+    if error_path.exists():
+        message = error_path.read_text().strip()
+        return "unavailable", message or "ReconViaGen worker failed to start."
+    if not worker_url:
+        return "unavailable", "ReconViaGen worker is not configured."
+    return "loading", "ReconViaGen worker is loading."
 
 
 def _run_reconstruction(

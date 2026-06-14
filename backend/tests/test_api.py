@@ -70,3 +70,41 @@ def test_generated_asset_endpoints_return_glb_and_stl(tmp_path: Path, monkeypatc
     assert preview.headers["content-type"] == "model/gltf-binary"
     assert printable.status_code == 200
     assert printable.headers["content-type"] == "model/stl"
+
+
+def test_capabilities_reports_pipeline_option_support(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("RECONVIAGEN_WORKER_ERROR", str(tmp_path / "missing-error"))
+    monkeypatch.delenv("RECONVIAGEN_WORKER_URL", raising=False)
+    monkeypatch.setattr(api.importlib.util, "find_spec", lambda name: None)
+    client = TestClient(app)
+
+    response = client.get("/capabilities")
+
+    assert response.status_code == 200
+    pipelines = response.json()["pipelines"]
+    assert pipelines["metric"]["state"] == "available"
+    assert pipelines["metric"]["options"] == ["color", "object", "mesh"]
+    assert pipelines["vggt"]["state"] == "unavailable"
+    assert pipelines["ai_mesh"]["state"] == "unavailable"
+
+
+def test_capabilities_prefers_live_worker_over_stale_error(tmp_path: Path, monkeypatch) -> None:
+    error_path = tmp_path / "worker-error"
+    error_path.write_text("old startup failure")
+    monkeypatch.setenv("RECONVIAGEN_WORKER_ERROR", str(error_path))
+    monkeypatch.setenv("RECONVIAGEN_WORKER_URL", "http://worker")
+
+    class HealthyResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+    monkeypatch.setattr(api.urllib.request, "urlopen", lambda *args, **kwargs: HealthyResponse())
+
+    response = TestClient(app).get("/capabilities")
+
+    assert response.json()["pipelines"]["ai_mesh"]["state"] == "available"

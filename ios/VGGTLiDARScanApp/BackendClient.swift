@@ -1,23 +1,111 @@
 import Foundation
+import SwiftUI
+
+enum ScanPipeline: String, CaseIterable, Identifiable {
+    case metric
+    case vggt
+    case aiMesh = "ai_mesh"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .metric: return "LiDAR"
+        case .vggt: return "VGGT"
+        case .aiMesh: return "AI Mesh"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .metric: return "ruler"
+        case .vggt: return "circle.grid.3x3.fill"
+        case .aiMesh: return "wand.and.stars"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .metric: return .green
+        case .vggt: return .purple
+        case .aiMesh: return .pink
+        }
+    }
+
+    var timeout: TimeInterval {
+        self == .aiMesh ? 2_400 : 900
+    }
+}
+
+struct ReconstructionOptions {
+    let pipeline: ScanPipeline
+    let preserveColor: Bool
+    let extractObject: Bool
+    let reconstructMesh: Bool
+
+    var effectiveObject: Bool {
+        pipeline == .aiMesh || extractObject
+    }
+
+    var effectiveMesh: Bool {
+        switch pipeline {
+        case .metric: return reconstructMesh
+        case .vggt: return false
+        case .aiMesh: return true
+        }
+    }
+}
+
+enum BackendAssetKind: String, CaseIterable, Identifiable {
+    case result
+    case preview
+    case print
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .result: return "PLY"
+        case .preview: return "PBR GLB"
+        case .print: return "Print STL"
+        }
+    }
+
+    var filename: String {
+        switch self {
+        case .result: return "scan_final.ply"
+        case .preview: return "scan_object_preview.glb"
+        case .print: return "scan_object_print.stl"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .result: return "cube.transparent"
+        case .preview: return "paintpalette"
+        case .print: return "printer"
+        }
+    }
+}
 
 struct BackendClient {
     let baseURL: URL
 
-    func reconstruct(
-        packageURL: URL,
-        runVGGT: Bool,
-        preserveColor: Bool,
-        extractObject: Bool,
-        reconstructMesh: Bool,
-        aiMesh: Bool
-    ) async throws -> BackendReconstructionResult {
+    func capabilities() async throws -> BackendCapabilities {
+        let url = baseURL.appendingPathComponent("capabilities")
+        let (data, response) = try await URLSession.shared.data(from: url)
+        try validate(response: response, data: data)
+        return try JSONDecoder.scanBackend.decode(BackendCapabilities.self, from: data)
+    }
+
+    func reconstruct(packageURL: URL, options: ReconstructionOptions) async throws -> BackendReconstructionResult {
         var components = URLComponents(url: baseURL.appendingPathComponent("reconstruct"), resolvingAgainstBaseURL: false)
         components?.queryItems = [
-            URLQueryItem(name: "run_vggt", value: runVGGT ? "true" : "false"),
-            URLQueryItem(name: "preserve_color", value: preserveColor ? "true" : "false"),
-            URLQueryItem(name: "extract_object", value: extractObject ? "true" : "false"),
-            URLQueryItem(name: "reconstruct_mesh", value: reconstructMesh ? "true" : "false"),
-            URLQueryItem(name: "ai_mesh", value: aiMesh ? "true" : "false")
+            URLQueryItem(name: "run_vggt", value: options.pipeline == .vggt ? "true" : "false"),
+            URLQueryItem(name: "preserve_color", value: options.preserveColor ? "true" : "false"),
+            URLQueryItem(name: "extract_object", value: options.effectiveObject ? "true" : "false"),
+            URLQueryItem(name: "reconstruct_mesh", value: options.effectiveMesh ? "true" : "false"),
+            URLQueryItem(name: "ai_mesh", value: options.pipeline == .aiMesh ? "true" : "false")
         ]
         guard let url = components?.url else {
             throw URLError(.badURL)
@@ -26,7 +114,7 @@ struct BackendClient {
         let boundary = "Boundary-\(UUID().uuidString)"
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.timeoutInterval = aiMesh ? 2_400 : 600
+        request.timeoutInterval = options.pipeline.timeout
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 
         var body = Data()
@@ -37,28 +125,93 @@ struct BackendClient {
         body.appendString("\r\n--\(boundary)--\r\n")
 
         let configuration = URLSessionConfiguration.default
-        configuration.timeoutIntervalForRequest = aiMesh ? 2_400 : 600
-        configuration.timeoutIntervalForResource = aiMesh ? 2_700 : 900
+        configuration.timeoutIntervalForRequest = options.pipeline.timeout
+        configuration.timeoutIntervalForResource = options.pipeline.timeout + 300
         let session = URLSession(configuration: configuration)
         let (data, response) = try await session.upload(for: request, from: body)
-        guard let httpResponse = response as? HTTPURLResponse, (200..<300).contains(httpResponse.statusCode) else {
-            let message = String(data: data, encoding: .utf8) ?? "Backend request failed"
-            throw BackendError.requestFailed(message)
-        }
+        let httpResponse = try validate(response: response, data: data)
 
-        let outputURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("scan_final-\(UUID().uuidString).ply")
+        let outputURL = temporaryURL(filename: "scan_final-\(UUID().uuidString).ply")
         try data.write(to: outputURL, options: .atomic)
         let metrics = httpResponse.value(forHTTPHeaderField: "X-Reconstruction-Metrics")
             .flatMap { $0.data(using: .utf8) }
             .flatMap { try? JSONDecoder.scanBackend.decode(BackendMetrics.self, from: $0) }
-        return BackendReconstructionResult(outputURL: outputURL, metrics: metrics)
+        return BackendReconstructionResult(
+            outputURL: outputURL,
+            jobID: httpResponse.value(forHTTPHeaderField: "X-Job-ID"),
+            metrics: metrics
+        )
+    }
+
+    func downloadAsset(jobID: String, kind: BackendAssetKind) async throws -> URL {
+        let url = baseURL
+            .appendingPathComponent("jobs")
+            .appendingPathComponent(jobID)
+            .appendingPathComponent(kind.rawValue)
+        let (downloadURL, response) = try await URLSession.shared.download(from: url)
+        try validate(response: response, data: nil)
+        let destination = temporaryURL(filename: "\(jobID)-\(kind.filename)")
+        try? FileManager.default.removeItem(at: destination)
+        try FileManager.default.moveItem(at: downloadURL, to: destination)
+        return destination
+    }
+
+    @discardableResult
+    private func validate(response: URLResponse, data: Data?) throws -> HTTPURLResponse {
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            let detail = data
+                .flatMap { try? JSONDecoder().decode(BackendErrorPayload.self, from: $0).detail }
+                ?? data.flatMap { String(data: $0, encoding: .utf8) }
+                ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
+            throw BackendError.requestFailed(detail)
+        }
+        return httpResponse
+    }
+
+    private func temporaryURL(filename: String) -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent(filename)
     }
 }
 
 struct BackendReconstructionResult {
     let outputURL: URL
+    let jobID: String?
     let metrics: BackendMetrics?
+}
+
+struct BackendCapabilities: Decodable {
+    let pipelines: [String: PipelineCapability]
+
+    func capability(for pipeline: ScanPipeline) -> PipelineCapability {
+        pipelines[pipeline.rawValue] ?? .unavailable
+    }
+}
+
+struct PipelineCapability: Decodable {
+    let state: PipelineState
+    let reason: String?
+    let options: [String]
+    let requiredOptions: [String]?
+
+    static let unavailable = PipelineCapability(
+        state: .unavailable,
+        reason: "Backend unavailable.",
+        options: [],
+        requiredOptions: nil
+    )
+
+    var isAvailable: Bool {
+        state == .available
+    }
+}
+
+enum PipelineState: String, Decodable {
+    case available
+    case loading
+    case unavailable
 }
 
 struct BackendMetrics: Decodable {
@@ -93,6 +246,14 @@ struct BackendMetrics: Decodable {
     let printMeshWatertight: Bool?
     let alignmentRmseM: Double?
     let alignmentScale: Double?
+
+    func supports(_ kind: BackendAssetKind) -> Bool {
+        switch kind {
+        case .result: return true
+        case .preview: return previewGlbOutput != nil
+        case .print: return printStlOutput != nil
+        }
+    }
 }
 
 enum BackendError: LocalizedError {
@@ -100,10 +261,13 @@ enum BackendError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .requestFailed(let message):
-            return message
+        case .requestFailed(let message): return message
         }
     }
+}
+
+private struct BackendErrorPayload: Decodable {
+    let detail: String
 }
 
 private extension Data {

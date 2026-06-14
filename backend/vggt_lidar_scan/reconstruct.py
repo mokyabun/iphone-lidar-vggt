@@ -114,7 +114,7 @@ def reconstruct_scan(
         if reconstruct_mesh and mesh_output:
             final_source = mesh_output
             final_output_source = actual_mesh_method or "mesh"
-        elif use_vggt_as_final and vggt_output:
+        elif (run_vggt_stage or use_vggt_as_final) and vggt_output:
             final_source = vggt_output
             final_output_source = "vggt"
         elif mesh_output:

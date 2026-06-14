@@ -152,6 +152,36 @@ def test_reconstruct_scan_prefers_mesh_when_requested(tmp_path: Path, monkeypatc
     assert "element face 1" in (tmp_path / "out" / "scan_final.ply").read_text()
 
 
+def test_reconstruct_scan_uses_vggt_as_selected_pipeline(tmp_path: Path, monkeypatch) -> None:
+    package = _write_test_package(tmp_path)
+    vggt_output = tmp_path / "vggt.ply"
+    vggt_output.write_text(
+        "\n".join(
+            [
+                "ply",
+                "format ascii 1.0",
+                "element vertex 1",
+                "property float x",
+                "property float y",
+                "property float z",
+                "end_header",
+                "9 8 7",
+            ]
+        )
+        + "\n"
+    )
+    monkeypatch.setattr(
+        "vggt_lidar_scan.reconstruct.run_vggt",
+        lambda *args, **kwargs: (vggt_output, 1),
+    )
+
+    metrics = reconstruct_scan(package, tmp_path / "out", stride=1, run_vggt_stage=True)
+
+    assert metrics.final_output_source == "vggt"
+    assert metrics.vggt_points == 1
+    assert "9 8 7" in (tmp_path / "out" / "scan_final.ply").read_text()
+
+
 def test_reconstruct_scan_falls_back_when_ai_mesh_fails(tmp_path: Path, monkeypatch) -> None:
     package = _write_test_package(tmp_path)
     metric_mesh = _write_test_mesh(tmp_path / "metric.ply")

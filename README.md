@@ -43,6 +43,17 @@ uv run scan-reconstruct path/to/ScanPackage.zip --output runs/demo --run-vggt
 
 Open `ios/VGGTLiDARScanApp.xcodeproj` in Xcode and run on a LiDAR-capable device. The app intentionally targets device capture first; simulator builds are useful only for compilation checks.
 
+The capture screen exposes three backend modes:
+
+- `LiDAR`: metric colored point cloud, optional object masking, and optional TSDF mesh.
+- `VGGT`: colored VGGT point reconstruction; mesh is disabled because this path produces points.
+- `AI Mesh`: ReconViaGen multi-view mesh aligned back to the LiDAR metric scale. Object extraction and mesh generation are required.
+
+The app queries `GET /capabilities` and disables pipelines or toggles that the
+connected backend cannot currently run. The result viewer can export the final
+PLY and, for successful AI Mesh jobs, download and share the PBR GLB and
+3D-print STL.
+
 The exported package format is:
 
 ```text
@@ -66,6 +77,7 @@ uv run uvicorn vggt_lidar_scan.api:app --reload
 
 Endpoints:
 
+- `GET /capabilities` reports available pipelines and supported options
 - `POST /reconstruct` multipart upload field: `scan_package`; returns `scan_final.ply` directly for the app demo path
 - `POST /jobs` multipart upload field: `scan_package`
 - `GET /jobs/{job_id}`
@@ -92,7 +104,10 @@ For the app demo, run the backend on a machine reachable from the iPad:
 uv run uvicorn vggt_lidar_scan.api:app --host 0.0.0.0 --port 8000
 ```
 
-In the app, set the backend URL to the host IP, for example `http://192.168.0.20:8000`. After scanning, tap `Backend`; the app uploads `ScanPackage.zip`, receives `scan_final.ply`, and opens a point-cloud preview.
+In the app, set the backend URL to the host IP, for example
+`http://192.168.0.20:8000`. Choose a ready pipeline, scan, and tap `Process`.
+The result view previews `scan_final.ply`; its download menu exports PLY and
+offers GLB/STL when the selected pipeline produced them.
 
 ## Practical Scope
 
