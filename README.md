@@ -140,6 +140,7 @@ APP_INSTALL_EXTRAS=reconstruction,vggt,segmentation
 APP_PREPARE_RECONVIAGEN=1
 APP_PREFETCH_RECONVIAGEN=1
 RECONVIAGEN_PRELOAD=1
+HF_TOKEN=hf_your_read_token
 VGGT_MAX_IMAGES=12
 VGGT_PRELOAD=0
 SCAN_MAX_FRAMES=24
@@ -194,12 +195,20 @@ and compiles several CUDA extensions and can take a while. Later starts reuse
 the repository, environment, and model caches. The model worker is loaded once
 in the background and reused by reconstruction requests.
 
+TRELLIS.2 uses Meta's gated
+[`facebook/dinov3-vitl16-pretrain-lvd1689m`](https://huggingface.co/facebook/dinov3-vitl16-pretrain-lvd1689m)
+checkpoint. Accept the model license with the same Hugging Face account as the
+token, then add `HF_TOKEN` as a RunPod template or Pod environment variable.
+`run.sh` checks this access before starting the worker and reports an immediate,
+actionable backend error when access is missing.
+
 Recommended A40 settings:
 
 ```bash
 APP_PREPARE_RECONVIAGEN=1
 APP_PREFETCH_RECONVIAGEN=1
 RECONVIAGEN_PRELOAD=1
+HF_TOKEN=hf_your_read_token
 RECONVIAGEN_MAX_IMAGES=6
 RECONVIAGEN_PIPELINE_TYPE=1024_cascade
 RECONVIAGEN_SS_SOURCE=mesh

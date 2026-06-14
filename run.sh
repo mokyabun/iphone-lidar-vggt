@@ -14,6 +14,7 @@ APP_PREFETCH_VGGT="${APP_PREFETCH_VGGT:-0}"
 APP_PREPARE_RECONVIAGEN="${APP_PREPARE_RECONVIAGEN:-1}"
 APP_PREFETCH_RECONVIAGEN="${APP_PREFETCH_RECONVIAGEN:-1}"
 RECONVIAGEN_PRELOAD="${RECONVIAGEN_PRELOAD:-1}"
+RECONVIAGEN_STARTUP_BLOCKED=0
 PYTHON_BIN="${PYTHON_BIN:-}"
 
 export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
@@ -42,6 +43,8 @@ export RECONVIAGEN_DECIMATION_TARGET="${RECONVIAGEN_DECIMATION_TARGET:-500000}"
 export RECONVIAGEN_TEXTURE_SIZE="${RECONVIAGEN_TEXTURE_SIZE:-2048}"
 export RECONVIAGEN_TIMEOUT_SECONDS="${RECONVIAGEN_TIMEOUT_SECONDS:-2400}"
 export RECONVIAGEN_WORKER_ERROR="${RECONVIAGEN_WORKER_ERROR:-/workspace/cache/reconviagen-worker.error}"
+export RECONVIAGEN_WORKER_LOG="${RECONVIAGEN_WORKER_LOG:-/workspace/cache/reconviagen-worker.log}"
+export RECONVIAGEN_DINO_MODEL="${RECONVIAGEN_DINO_MODEL:-facebook/dinov3-vitl16-pretrain-lvd1689m}"
 export MICROMAMBA_BIN="${MICROMAMBA_BIN:-/workspace/cache/bin/micromamba}"
 export MAMBA_ROOT_PREFIX="${MAMBA_ROOT_PREFIX:-/workspace/cache/micromamba}"
 export YOLO_CONFIG_DIR="${YOLO_CONFIG_DIR:-/workspace/cache/ultralytics}"
@@ -256,7 +259,7 @@ prepare_reconviagen() {
     "${MICROMAMBA_BIN}" run -p "${RECONVIAGEN_ENV}" pip install \
       pillow imageio imageio-ffmpeg tqdm easydict opencv-python-headless scipy ninja \
       rembg onnxruntime trimesh open3d xatlas pyvista pymeshfix igraph lpips \
-      kornia==0.8.2 huggingface_hub==0.36.2 transformers==4.57.1 \
+      kornia==0.8.2 timm==1.0.22 huggingface_hub==0.36.2 transformers==4.57.1 \
       zstandard rtree fast-simplification
     "${MICROMAMBA_BIN}" run -p "${RECONVIAGEN_ENV}" pip install \
       git+https://github.com/EasternJournalist/utils3d.git@9a4eb15e4021b67b12c460c7057d642626897ec8
@@ -274,10 +277,26 @@ prepare_reconviagen() {
       "${RECONVIAGEN_REPO_DIR}/wheels/TRELLIS.2/o-voxel" --no-build-isolation
   fi
 
+  if ! "${RECONVIAGEN_PYTHON}" -c "import timm" >/dev/null 2>&1; then
+    log "Installing the ReconViaGen timm runtime dependency."
+    "${MICROMAMBA_BIN}" run -p "${RECONVIAGEN_ENV}" pip install "timm==1.0.22"
+  fi
+
+  if ! "${RECONVIAGEN_PYTHON}" -c \
+    "from huggingface_hub import hf_hub_download; hf_hub_download('${RECONVIAGEN_DINO_MODEL}', 'config.json')" \
+    >/dev/null 2>&1; then
+    local access_error
+    access_error="ReconViaGen requires access to the gated Hugging Face model ${RECONVIAGEN_DINO_MODEL}. Accept its license at https://huggingface.co/${RECONVIAGEN_DINO_MODEL}, then set HF_TOKEN to a Hugging Face read token and restart run.sh."
+    printf '%s\n' "${access_error}" > "${RECONVIAGEN_WORKER_ERROR}"
+    RECONVIAGEN_STARTUP_BLOCKED=1
+    log "${access_error}"
+    return 0
+  fi
+
   if [ "${APP_PREFETCH_RECONVIAGEN}" = "1" ]; then
-    log "Prefetching ReconViaGen and TRELLIS.2 weights."
+    log "Prefetching ReconViaGen, TRELLIS.2, and DINOv3 weights."
     "${MICROMAMBA_BIN}" run -p "${RECONVIAGEN_ENV}" python -c \
-      "from huggingface_hub import snapshot_download; snapshot_download('Stable-X/trellis-vggt-v0-2'); snapshot_download('microsoft/TRELLIS.2-4B')"
+      "from huggingface_hub import snapshot_download; snapshot_download('Stable-X/trellis-vggt-v0-2'); snapshot_download('microsoft/TRELLIS.2-4B'); snapshot_download('${RECONVIAGEN_DINO_MODEL}')"
   fi
 }
 
@@ -286,13 +305,25 @@ start_reconviagen_worker() {
     return 0
   fi
   export RECONVIAGEN_WORKER_URL="http://127.0.0.1:${RECONVIAGEN_WORKER_PORT}"
+  if [ "${RECONVIAGEN_STARTUP_BLOCKED}" = "1" ]; then
+    log "ReconViaGen worker was not started; see ${RECONVIAGEN_WORKER_ERROR}."
+    return 0
+  fi
   rm -f "${RECONVIAGEN_WORKER_ERROR}"
   log "Starting ReconViaGen worker on ${RECONVIAGEN_WORKER_URL}."
   (
+    set +e
     "${MICROMAMBA_BIN}" run -p "${RECONVIAGEN_ENV}" \
       "${RECONVIAGEN_PYTHON}" "${APP_DIR}/backend/vggt_lidar_scan/reconviagen_worker.py" \
-      --host 127.0.0.1 --port "${RECONVIAGEN_WORKER_PORT}" \
-      || printf 'worker exited with status %s\n' "$?" > "${RECONVIAGEN_WORKER_ERROR}"
+      --host 127.0.0.1 --port "${RECONVIAGEN_WORKER_PORT}" 2>&1 \
+      | tee "${RECONVIAGEN_WORKER_LOG}"
+    local worker_status="${PIPESTATUS[0]}"
+    if [ "${worker_status}" -ne 0 ]; then
+      {
+        printf 'worker exited with status %s\n' "${worker_status}"
+        tail -n 60 "${RECONVIAGEN_WORKER_LOG}"
+      } > "${RECONVIAGEN_WORKER_ERROR}"
+    fi
   ) &
 }
 
