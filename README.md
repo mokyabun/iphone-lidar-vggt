@@ -104,7 +104,7 @@ uv run --extra vggt vggt-prepare
 
 Runtime environment variables:
 
-- `VGGT_AUTO_DOWNLOAD=1` clones `facebookresearch/vggt` into `~/.cache/vggt-lidar/vggt` if the Python package is not already available.
+- `VGGT_AUTO_DOWNLOAD=1` clones `facebookresearch/vggt` into `/workspace/cache/vggt-lidar/vggt` by default if the Python package is not already available.
 - `VGGT_REPO_DIR=/path/to/vggt` points the backend at a manually cloned VGGT repo.
 - `VGGT_CACHE_ROOT=/workspace/cache/vggt-lidar` changes the repo/weight cache root.
 - `VGGT_ALLOW_CPU=1` allows very slow CPU-only VGGT experiments; GPU is expected for real use.
@@ -126,6 +126,23 @@ bash -lc 'curl -fsSL https://raw.githubusercontent.com/mokyabun/iphone-lidar-vgg
 ```
 
 `run.sh` automatically installs the small system dependencies, clones or updates this repository under `/workspace/iphone-lidar-vggt`, installs the Python package, and starts FastAPI on `0.0.0.0:8000`.
+
+RunPod's persistent network volume is mounted at `/workspace`. The bootstrap
+keeps the replaceable Git checkout in `/workspace/iphone-lidar-vggt` and stores
+all large reusable state outside that checkout:
+
+- `/workspace/cache/vggt-lidar/huggingface`: Hugging Face model snapshots
+- `/workspace/cache/vggt-lidar/torch`: Torch Hub models, including DINOv2
+- `/workspace/cache/vggt-lidar/ultralytics`: SAM weights
+- `/workspace/cache/vggt-lidar/rembg`: background-removal weights
+- `/workspace/cache/ReconViaGen`: ReconViaGen and vendored source repositories
+- `/workspace/cache/reconviagen-v05-env`: isolated Python/CUDA environment
+- `/workspace/cache/{torch-extensions,triton,cuda}`: compiled runtime caches
+
+The code checkout is reset to the selected Git revision on each launch, while
+these model and environment directories remain intact across Pod replacement.
+Set `APP_PERSIST_ROOT` only when the persistent volume is mounted somewhere
+other than `/workspace`.
 
 Useful overrides:
 
@@ -201,6 +218,18 @@ checkpoint. Accept the model license with the same Hugging Face account as the
 token, then add `HF_TOKEN` as a RunPod template or Pod environment variable.
 `run.sh` checks this access before starting the worker and reports an immediate,
 actionable backend error when access is missing.
+
+Use a dedicated fine-grained read token restricted to that gated model when
+possible. A regular account-wide `read` token also works, but grants the Pod
+read access to every repository that account can read. Write permission is not
+required.
+
+The ReconViaGen path downloads about 21 GB of model checkpoints. The isolated
+CUDA/Python environment, source trees, compiled extensions, temporary download
+headroom, and generated scans require substantially more space. A **75 GB**
+network volume is the practical minimum; **100 GB is recommended**. Use
+**150 GB** if standalone VGGT weights, multiple reconstruction models, or many
+scan results will be retained.
 
 Recommended A40 settings:
 

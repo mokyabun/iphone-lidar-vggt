@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+APP_PERSIST_ROOT="${APP_PERSIST_ROOT:-/workspace}"
+APP_CACHE_ROOT="${APP_CACHE_ROOT:-${APP_PERSIST_ROOT}/cache}"
+APP_MODEL_ROOT="${APP_MODEL_ROOT:-${APP_CACHE_ROOT}/vggt-lidar}"
 APP_REPO_URL="${APP_REPO_URL:-https://github.com/mokyabun/iphone-lidar-vggt.git}"
 APP_REPO_REF="${APP_REPO_REF:-main}"
-APP_DIR="${APP_DIR:-/workspace/iphone-lidar-vggt}"
+APP_DIR="${APP_DIR:-${APP_PERSIST_ROOT}/iphone-lidar-vggt}"
 APP_HOST="${APP_HOST:-0.0.0.0}"
 APP_PORT="${APP_PORT:-8000}"
 APP_UPDATE_MODE="${APP_UPDATE_MODE:-reset}"
@@ -26,13 +29,26 @@ export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-4}"
 export NUMEXPR_NUM_THREADS="${NUMEXPR_NUM_THREADS:-4}"
 export TORCH_NUM_THREADS="${TORCH_NUM_THREADS:-4}"
 export TORCH_NUM_INTEROP_THREADS="${TORCH_NUM_INTEROP_THREADS:-1}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-${APP_CACHE_ROOT}/xdg}"
+export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-${APP_CACHE_ROOT}/config}"
+export TORCH_HOME="${TORCH_HOME:-${APP_MODEL_ROOT}/torch}"
+export TORCH_EXTENSIONS_DIR="${TORCH_EXTENSIONS_DIR:-${APP_CACHE_ROOT}/torch-extensions}"
+export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-${APP_CACHE_ROOT}/triton}"
+export CUDA_CACHE_PATH="${CUDA_CACHE_PATH:-${APP_CACHE_ROOT}/cuda}"
+export NUMBA_CACHE_DIR="${NUMBA_CACHE_DIR:-${APP_CACHE_ROOT}/numba}"
+export MPLCONFIGDIR="${MPLCONFIGDIR:-${APP_CACHE_ROOT}/matplotlib}"
+export U2NET_HOME="${U2NET_HOME:-${APP_MODEL_ROOT}/rembg}"
 export VGGT_AUTO_DOWNLOAD="${VGGT_AUTO_DOWNLOAD:-1}"
-export VGGT_CACHE_ROOT="${VGGT_CACHE_ROOT:-/workspace/cache/vggt-lidar}"
-export HF_HOME="${HF_HOME:-/workspace/cache/vggt-lidar/huggingface}"
+export VGGT_CACHE_ROOT="${VGGT_CACHE_ROOT:-${APP_MODEL_ROOT}}"
+export HF_HOME="${HF_HOME:-${APP_MODEL_ROOT}/huggingface}"
+export HF_HUB_CACHE="${HF_HUB_CACHE:-${HF_HOME}/hub}"
+export HF_XET_CACHE="${HF_XET_CACHE:-${HF_HOME}/xet}"
+export HF_ASSETS_CACHE="${HF_ASSETS_CACHE:-${HF_HOME}/assets}"
+export HF_TOKEN_PATH="${HF_TOKEN_PATH:-${HF_HOME}/token}"
 export RECONVIAGEN_REPO_URL="${RECONVIAGEN_REPO_URL:-https://github.com/GAP-LAB-CUHK-SZ/ReconViaGen.git}"
 export RECONVIAGEN_REPO_REF="${RECONVIAGEN_REPO_REF:-v0.5}"
-export RECONVIAGEN_REPO_DIR="${RECONVIAGEN_REPO_DIR:-/workspace/cache/ReconViaGen}"
-export RECONVIAGEN_ENV="${RECONVIAGEN_ENV:-/workspace/cache/reconviagen-v05-env}"
+export RECONVIAGEN_REPO_DIR="${RECONVIAGEN_REPO_DIR:-${APP_CACHE_ROOT}/ReconViaGen}"
+export RECONVIAGEN_ENV="${RECONVIAGEN_ENV:-${APP_CACHE_ROOT}/reconviagen-v05-env}"
 export RECONVIAGEN_PYTHON="${RECONVIAGEN_PYTHON:-${RECONVIAGEN_ENV}/bin/python}"
 export RECONVIAGEN_WORKER_PORT="${RECONVIAGEN_WORKER_PORT:-8011}"
 export RECONVIAGEN_MAX_IMAGES="${RECONVIAGEN_MAX_IMAGES:-6}"
@@ -42,13 +58,15 @@ export RECONVIAGEN_LOW_VRAM="${RECONVIAGEN_LOW_VRAM:-1}"
 export RECONVIAGEN_DECIMATION_TARGET="${RECONVIAGEN_DECIMATION_TARGET:-500000}"
 export RECONVIAGEN_TEXTURE_SIZE="${RECONVIAGEN_TEXTURE_SIZE:-2048}"
 export RECONVIAGEN_TIMEOUT_SECONDS="${RECONVIAGEN_TIMEOUT_SECONDS:-2400}"
-export RECONVIAGEN_WORKER_ERROR="${RECONVIAGEN_WORKER_ERROR:-/workspace/cache/reconviagen-worker.error}"
-export RECONVIAGEN_WORKER_LOG="${RECONVIAGEN_WORKER_LOG:-/workspace/cache/reconviagen-worker.log}"
+export RECONVIAGEN_WORKER_ERROR="${RECONVIAGEN_WORKER_ERROR:-${APP_CACHE_ROOT}/reconviagen-worker.error}"
+export RECONVIAGEN_WORKER_LOG="${RECONVIAGEN_WORKER_LOG:-${APP_CACHE_ROOT}/reconviagen-worker.log}"
 export RECONVIAGEN_DINO_MODEL="${RECONVIAGEN_DINO_MODEL:-facebook/dinov3-vitl16-pretrain-lvd1689m}"
-export MICROMAMBA_BIN="${MICROMAMBA_BIN:-/workspace/cache/bin/micromamba}"
-export MAMBA_ROOT_PREFIX="${MAMBA_ROOT_PREFIX:-/workspace/cache/micromamba}"
-export YOLO_CONFIG_DIR="${YOLO_CONFIG_DIR:-/workspace/cache/ultralytics}"
-export ULTRALYTICS_SETTINGS="${ULTRALYTICS_SETTINGS:-/workspace/cache/ultralytics/settings.json}"
+export MICROMAMBA_BIN="${MICROMAMBA_BIN:-${APP_CACHE_ROOT}/bin/micromamba}"
+export MAMBA_ROOT_PREFIX="${MAMBA_ROOT_PREFIX:-${APP_CACHE_ROOT}/micromamba}"
+export YOLO_CONFIG_DIR="${YOLO_CONFIG_DIR:-${APP_CACHE_ROOT}/ultralytics}"
+export ULTRALYTICS_SETTINGS="${ULTRALYTICS_SETTINGS:-${YOLO_CONFIG_DIR}/settings.json}"
+export ULTRALYTICS_WEIGHTS_DIR="${ULTRALYTICS_WEIGHTS_DIR:-${APP_MODEL_ROOT}/ultralytics}"
+export ULTRALYTICS_RUNS_DIR="${ULTRALYTICS_RUNS_DIR:-${APP_CACHE_ROOT}/ultralytics/runs}"
 export SCAN_MAX_FRAMES="${SCAN_MAX_FRAMES:-24}"
 export SCAN_STRIDE="${SCAN_STRIDE:-4}"
 export SCAN_RUN_TSDF="${SCAN_RUN_TSDF:-0}"
@@ -137,17 +155,35 @@ install_system_packages() {
 prepare_cache_dirs() {
   log "Preparing cache directories."
   mkdir -p \
+    "${APP_CACHE_ROOT}" \
+    "${APP_MODEL_ROOT}" \
     "${VGGT_CACHE_ROOT}" \
     "${HF_HOME}" \
+    "${HF_HUB_CACHE}" \
+    "${HF_XET_CACHE}" \
+    "${HF_ASSETS_CACHE}" \
+    "${TORCH_HOME}" \
+    "${TORCH_EXTENSIONS_DIR}" \
+    "${TRITON_CACHE_DIR}" \
+    "${CUDA_CACHE_PATH}" \
+    "${NUMBA_CACHE_DIR}" \
+    "${MPLCONFIGDIR}" \
+    "${U2NET_HOME}" \
     "${RECONVIAGEN_REPO_DIR}" \
     "${RECONVIAGEN_ENV}" \
     "$(dirname "${MICROMAMBA_BIN}")" \
     "${MAMBA_ROOT_PREFIX}" \
     "${YOLO_CONFIG_DIR}" \
     "${YOLO_CONFIG_DIR}/Ultralytics" \
-    "$(dirname "${ULTRALYTICS_SETTINGS}")"
-  chmod -R a+rwX "${VGGT_CACHE_ROOT}" "${RECONVIAGEN_REPO_DIR}" "${RECONVIAGEN_ENV}" \
-    "${MAMBA_ROOT_PREFIX}" "${YOLO_CONFIG_DIR}" || true
+    "$(dirname "${ULTRALYTICS_SETTINGS}")" \
+    "${ULTRALYTICS_WEIGHTS_DIR}" \
+    "${ULTRALYTICS_RUNS_DIR}"
+  chmod -R a+rwX "${APP_CACHE_ROOT}" "${APP_MODEL_ROOT}" || true
+
+  if [ -d /root/.cache/torch ] && [ -z "$(find "${TORCH_HOME}" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+    log "Migrating the legacy Torch cache into persistent storage."
+    cp -a /root/.cache/torch/. "${TORCH_HOME}/"
+  fi
 }
 
 backup_non_git_dir() {
@@ -206,6 +242,9 @@ install_python_packages() {
   else
     uv pip install --system -e .
   fi
+  "${PYTHON_BIN}" -c \
+    "from ultralytics import settings; settings.update({'weights_dir': '${ULTRALYTICS_WEIGHTS_DIR}', 'runs_dir': '${ULTRALYTICS_RUNS_DIR}'})" \
+    >/dev/null 2>&1 || true
 }
 
 prepare_vggt() {
