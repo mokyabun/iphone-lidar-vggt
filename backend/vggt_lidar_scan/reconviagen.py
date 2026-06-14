@@ -310,7 +310,7 @@ def _convert_and_align_mesh(
     print_mesh, watertight = _prepare_print_mesh(mesh, trimesh)
     actual_print_path: Path | None = None
     if print_mesh is not None:
-        print_mesh.export(print_stl_path, file_type="stl")
+        _export_print_stl(print_mesh, print_stl_path)
         actual_print_path = print_stl_path
     return ReconViaGenResult(
         mesh_path=output_path,
@@ -471,12 +471,20 @@ def _prepare_print_mesh(mesh, trimesh):  # noqa: ANN001
     minimum_extent = float(np.min(extent[extent > 0])) if np.any(extent > 0) else 0.1
     pitch = _env_float("AI_PRINT_VOXEL_METERS", max(0.0015, minimum_extent / 180.0))
     try:
-        repaired = printable.voxelized(pitch=pitch).fill().marching_cubes
+        voxels = printable.voxelized(pitch=pitch).fill()
+        repaired = voxels.marching_cubes
+        repaired.apply_transform(voxels.transform)
         repaired.remove_unreferenced_vertices()
         trimesh.repair.fix_normals(repaired)
         return repaired, bool(repaired.is_watertight)
     except Exception:
         return printable, False
+
+
+def _export_print_stl(mesh, output_path: Path) -> None:  # noqa: ANN001
+    print_mesh_mm = mesh.copy()
+    print_mesh_mm.apply_scale(1000.0)
+    print_mesh_mm.export(output_path, file_type="stl")
 
 
 def _clean_trimesh(mesh) -> None:  # noqa: ANN001

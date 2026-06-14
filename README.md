@@ -79,8 +79,8 @@ Endpoints:
 
 - `GET /capabilities` reports available pipelines and supported options
 - `POST /reconstruct` multipart upload field: `scan_package`; returns `scan_final.ply` directly for the app demo path
-- `POST /jobs` multipart upload field: `scan_package`
-- `GET /jobs/{job_id}`
+- `POST /jobs` multipart upload field: `scan_package`; immediately returns a queued job
+- `GET /jobs/{job_id}` reports queued, processing, complete, or failed state
 - `GET /jobs/{job_id}/result`
 - `GET /jobs/{job_id}/preview` for the aligned PBR GLB
 - `GET /jobs/{job_id}/print` for the repaired STL
@@ -106,8 +106,11 @@ uv run uvicorn vggt_lidar_scan.api:app --host 0.0.0.0 --port 8000
 
 In the app, set the backend URL to the host IP, for example
 `http://192.168.0.20:8000`. Choose a ready pipeline, scan, and tap `Process`.
-The result view previews `scan_final.ply`; its download menu exports PLY and
-offers GLB/STL when the selected pipeline produced them.
+The app uploads once, polls the asynchronous job endpoint, and downloads the
+result after completion. This avoids keeping a single RunPod proxy request open
+during multi-minute AI reconstruction. The result view previews
+`scan_final.ply`; its download menu exports PLY and offers GLB/STL when the
+selected pipeline produced them.
 
 ## Practical Scope
 
@@ -273,7 +276,14 @@ AI_ICP_ITERATIONS=20
 AI_ICP_MAX_DISTANCE_METERS=0.03
 AI_PRINT_VOXEL_REPAIR=1
 AI_PRINT_VOXEL_METERS=0.0015
+RECONVIAGEN_WORKER_RESTART=1
+RECONVIAGEN_WORKER_RESTART_DELAY_SECONDS=20
 ```
+
+AI preview assets use meters. Printable STL vertices are exported in
+millimeters, which is the unit expected by common slicers. The worker restart
+settings recover automatically if the model worker is killed by transient
+memory pressure after finishing a generation.
 
 Official project: `https://github.com/GAP-LAB-CUHK-SZ/ReconViaGen/tree/v0.5`
 

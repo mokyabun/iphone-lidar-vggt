@@ -364,17 +364,27 @@ start_reconviagen_worker() {
   log "Starting ReconViaGen worker on ${RECONVIAGEN_WORKER_URL}."
   (
     set +e
-    "${MICROMAMBA_BIN}" run -p "${RECONVIAGEN_ENV}" \
-      "${RECONVIAGEN_PYTHON}" "${APP_DIR}/backend/vggt_lidar_scan/reconviagen_worker.py" \
-      --host 127.0.0.1 --port "${RECONVIAGEN_WORKER_PORT}" 2>&1 \
-      | tee "${RECONVIAGEN_WORKER_LOG}"
-    local worker_status="${PIPESTATUS[0]}"
-    if [ "${worker_status}" -ne 0 ]; then
+    while true; do
+      "${MICROMAMBA_BIN}" run -p "${RECONVIAGEN_ENV}" \
+        "${RECONVIAGEN_PYTHON}" "${APP_DIR}/backend/vggt_lidar_scan/reconviagen_worker.py" \
+        --host 127.0.0.1 --port "${RECONVIAGEN_WORKER_PORT}" 2>&1 \
+        | tee -a "${RECONVIAGEN_WORKER_LOG}"
+      local worker_status="${PIPESTATUS[0]}"
+      if [ "${worker_status}" -eq 0 ]; then
+        break
+      fi
       {
         printf 'worker exited with status %s\n' "${worker_status}"
         tail -n 60 "${RECONVIAGEN_WORKER_LOG}"
       } > "${RECONVIAGEN_WORKER_ERROR}"
-    fi
+      if [ "${RECONVIAGEN_WORKER_RESTART:-1}" != "1" ]; then
+        break
+      fi
+      local restart_delay="${RECONVIAGEN_WORKER_RESTART_DELAY_SECONDS:-20}"
+      log "ReconViaGen worker exited with status ${worker_status}; restarting in ${restart_delay}s."
+      sleep "${restart_delay}"
+      rm -f "${RECONVIAGEN_WORKER_ERROR}"
+    done
   ) &
 }
 

@@ -64,7 +64,7 @@ def capabilities() -> dict[str, object]:
     }
 
 
-@app.post("/jobs")
+@app.post("/jobs", status_code=202)
 def create_job(
     scan_package: UploadFile = File(...),
     run_vggt: bool = False,
@@ -81,10 +81,11 @@ def create_job(
     with package_path.open("wb") as handle:
         shutil.copyfileobj(scan_package.file, handle)
 
-    metrics = _run_reconstruction(
-        package_path,
-        job_dir / "output",
-        job_dir / "error.txt",
+    _write_job_status(job_dir, "queued")
+    _launch_job(
+        package_path=package_path,
+        output_dir=job_dir / "output",
+        error_path=job_dir / "error.txt",
         run_vggt=run_vggt,
         preserve_color=preserve_color,
         extract_object=extract_object,
@@ -92,7 +93,7 @@ def create_job(
         ai_mesh=ai_mesh,
     )
 
-    return {"job_id": job_id, "metrics": metrics.model_dump()}
+    return {"job_id": job_id, "status": "queued"}
 
 
 @app.post("/reconstruct")
@@ -142,11 +143,18 @@ def get_job(job_id: str) -> dict[str, object]:
         raise HTTPException(status_code=404, detail="Job not found")
     metrics_path = job_dir / "output" / "metrics.json"
     if metrics_path.exists():
-        return {"job_id": job_id, "status": "complete", "metrics_path": str(metrics_path)}
+        return {
+            "job_id": job_id,
+            "status": "complete",
+            "metrics": json.loads(metrics_path.read_text()),
+        }
     error_path = job_dir / "error.txt"
     if error_path.exists():
         return {"job_id": job_id, "status": "failed", "error": error_path.read_text()}
-    return {"job_id": job_id, "status": "processing"}
+    status_path = job_dir / "status.json"
+    if status_path.exists():
+        return {"job_id": job_id, **json.loads(status_path.read_text())}
+    return {"job_id": job_id, "status": "queued"}
 
 
 @app.get("/jobs/{job_id}/result")
@@ -212,6 +220,32 @@ def _run_reconstruction(
     if not _RECONSTRUCTION_LOCK.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="Another reconstruction is already running. Wait for it to finish and retry.")
 
+    try:
+        return _perform_reconstruction(
+            package_path,
+            output_dir,
+            error_path,
+            run_vggt=run_vggt,
+            preserve_color=preserve_color,
+            extract_object=extract_object,
+            reconstruct_mesh=reconstruct_mesh,
+            ai_mesh=ai_mesh,
+        )
+    finally:
+        _RECONSTRUCTION_LOCK.release()
+
+
+def _perform_reconstruction(
+    package_path: Path,
+    output_dir: Path,
+    error_path: Path,
+    *,
+    run_vggt: bool,
+    preserve_color: bool,
+    extract_object: bool,
+    reconstruct_mesh: bool,
+    ai_mesh: bool,
+):
     started = time.monotonic()
     print(
         f"[api] reconstruction start package={package_path} "
@@ -235,8 +269,6 @@ def _run_reconstruction(
         error_path.write_text(str(exc))
         print(f"[api] reconstruction failed after {time.monotonic() - started:.1f}s: {exc}", flush=True)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    finally:
-        _RECONSTRUCTION_LOCK.release()
 
     print(
         f"[api] reconstruction complete after {time.monotonic() - started:.1f}s "
@@ -244,6 +276,56 @@ def _run_reconstruction(
         flush=True,
     )
     return metrics
+
+
+def _launch_job(**kwargs: object) -> None:
+    thread = threading.Thread(
+        target=_run_job_background,
+        kwargs=kwargs,
+        name=f"reconstruction-{Path(kwargs['output_dir']).parent.name}",
+        daemon=True,
+    )
+    thread.start()
+
+
+def _run_job_background(
+    package_path: Path,
+    output_dir: Path,
+    error_path: Path,
+    *,
+    run_vggt: bool,
+    preserve_color: bool,
+    extract_object: bool,
+    reconstruct_mesh: bool,
+    ai_mesh: bool,
+) -> None:
+    job_dir = output_dir.parent
+    with _RECONSTRUCTION_LOCK:
+        _write_job_status(job_dir, "processing")
+        try:
+            _perform_reconstruction(
+                package_path,
+                output_dir,
+                error_path,
+                run_vggt=run_vggt,
+                preserve_color=preserve_color,
+                extract_object=extract_object,
+                reconstruct_mesh=reconstruct_mesh,
+                ai_mesh=ai_mesh,
+            )
+        except Exception as exc:  # noqa: BLE001 - persist the failure for polling clients.
+            if not error_path.exists():
+                error_path.write_text(str(exc))
+            _write_job_status(job_dir, "failed")
+            return
+        _write_job_status(job_dir, "complete")
+
+
+def _write_job_status(job_dir: Path, status: str) -> None:
+    path = job_dir / "status.json"
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps({"status": status}))
+    temporary.replace(path)
 
 
 def _preload_vggt_background() -> None:

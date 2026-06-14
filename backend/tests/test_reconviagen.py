@@ -9,8 +9,10 @@ from vggt_lidar_scan.models import FrameRecord
 from vggt_lidar_scan.reconviagen import (
     _alignment_rmse,
     _best_metric_transform,
+    _export_print_stl,
     _nearest_distances,
     _object_asset_normalization,
+    _prepare_print_mesh,
     _refine_metric_transform_icp,
     prepare_multiview_input,
 )
@@ -109,3 +111,21 @@ def test_object_asset_normalization_centers_object_and_places_support_at_zero() 
     assert abs(np.median(normalized[:, 0])) < 0.01
     assert abs(np.median(normalized[:, 2])) < 0.01
     assert abs(0.32 + offset[1]) < 0.01
+
+
+def test_voxel_print_repair_preserves_metric_transform_and_exports_mm(tmp_path: Path, monkeypatch) -> None:
+    import trimesh
+
+    source = trimesh.creation.box(extents=[0.12, 0.08, 0.05])
+    source.update_faces(np.arange(len(source.faces) - 4))
+    monkeypatch.setattr(trimesh.repair, "fill_holes", lambda mesh: False)
+    monkeypatch.setenv("AI_PRINT_VOXEL_METERS", "0.005")
+
+    repaired, watertight = _prepare_print_mesh(source, trimesh)
+    output = tmp_path / "print.stl"
+    _export_print_stl(repaired, output)
+    exported = trimesh.load(output)
+
+    assert watertight is True
+    assert np.allclose(repaired.extents, source.extents, atol=0.012)
+    assert np.allclose(exported.extents, repaired.extents * 1000.0, atol=0.1)

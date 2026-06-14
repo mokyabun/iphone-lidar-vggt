@@ -108,3 +108,33 @@ def test_capabilities_prefers_live_worker_over_stale_error(tmp_path: Path, monke
     response = TestClient(app).get("/capabilities")
 
     assert response.json()["pipelines"]["ai_mesh"]["state"] == "available"
+
+
+def test_create_job_returns_queued_before_reconstruction(tmp_path: Path, monkeypatch) -> None:
+    launched: dict[str, object] = {}
+    monkeypatch.setattr(api, "RUN_ROOT", tmp_path)
+    monkeypatch.setattr(api, "_launch_job", lambda **kwargs: launched.update(kwargs))
+
+    response = TestClient(app).post(
+        "/jobs?ai_mesh=true",
+        files={"scan_package": ("ScanPackage.zip", b"zip-data", "application/zip")},
+    )
+
+    assert response.status_code == 202
+    job_id = response.json()["job_id"]
+    assert response.json()["status"] == "queued"
+    assert (tmp_path / job_id / "ScanPackage.zip").read_bytes() == b"zip-data"
+    assert launched["ai_mesh"] is True
+
+
+def test_job_status_returns_completed_metrics(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(api, "RUN_ROOT", tmp_path)
+    output = tmp_path / "job" / "output"
+    output.mkdir(parents=True)
+    (output / "metrics.json").write_text(json.dumps({"mesh_faces": 123, "final_output_type": "mesh"}))
+
+    response = TestClient(app).get("/jobs/job")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "complete"
+    assert response.json()["metrics"]["mesh_faces"] == 123
