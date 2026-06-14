@@ -7,7 +7,6 @@ from pathlib import Path
 import numpy as np
 
 from .geometry import apply_confidence_mask, camera_to_world_for_depth, colors_for_depth_pixels, keyframe_indices, unproject_depth
-from .generative import run_generative_mesh
 from .io import open_scan_package, read_confidence, read_depth, read_frames, read_image, write_json
 from .models import FrameRecord, ReconstructionMetrics
 from .ply import count_ply_elements, write_point_cloud_ply
@@ -26,15 +25,12 @@ def reconstruct_scan(
     preserve_color: bool = True,
     extract_object: bool = False,
     reconstruct_mesh: bool = False,
-    generative_mesh: bool = False,
 ) -> ReconstructionMetrics:
     max_frames = _env_int("SCAN_MAX_FRAMES", max_frames)
     stride = _env_int("SCAN_STRIDE", stride)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     warnings: list[str] = []
-    extract_object = extract_object or generative_mesh
-    reconstruct_mesh = reconstruct_mesh or generative_mesh
     object_mask_backend = os.environ.get("OBJECT_MASK_BACKEND", "sam3_depth") if extract_object else None
 
     with open_scan_package(Path(package_path)) as root:
@@ -42,7 +38,7 @@ def reconstruct_scan(
         selected = [frames[index] for index in keyframe_indices(len(frames), max_frames)]
         print(
             f"[reconstruct] frames={len(frames)} selected={len(selected)} "
-            f"vggt={run_vggt_stage} object={extract_object} mesh={reconstruct_mesh} pretty={generative_mesh}",
+            f"vggt={run_vggt_stage} object={extract_object} mesh={reconstruct_mesh}",
             flush=True,
         )
         object_masks = build_object_masks(root, selected) if extract_object else None
@@ -56,7 +52,7 @@ def reconstruct_scan(
 
         run_mesh = reconstruct_mesh or _env_bool("SCAN_RUN_TSDF", False)
         mesh_method = _mesh_method() if run_mesh else None
-        metric_mesh_output, tsdf_output, actual_mesh_method = build_mesh_output(
+        mesh_output, tsdf_output, actual_mesh_method = build_mesh_output(
             root,
             selected,
             output_dir,
@@ -67,25 +63,6 @@ def reconstruct_scan(
             object_masks,
             mesh_method,
         ) if run_mesh else (None, None, None)
-        mesh_output = metric_mesh_output
-        generative_mesh_output: Path | None = None
-        generative_mesh_backend: str | None = None
-        generative_mesh_used = False
-        if generative_mesh:
-            try:
-                generative_mesh_output, generative_mesh_backend = run_generative_mesh(
-                    root,
-                    selected,
-                    output_dir,
-                    points,
-                    object_masks,
-                    preserve_color,
-                )
-                mesh_output = generative_mesh_output
-                actual_mesh_method = f"{generative_mesh_backend}_metric_aligned"
-                generative_mesh_used = True
-            except Exception as exc:  # noqa: BLE001 - metric mesh remains a reliable fallback.
-                warnings.append(f"Pretty mesh skipped: {exc}")
         vggt_output: Path | None = None
         vggt_points = 0
         if run_vggt_stage:
@@ -128,9 +105,6 @@ def reconstruct_scan(
         mesh_method=actual_mesh_method if mesh_faces else None,
         final_output_type="mesh" if mesh_faces else "point_cloud",
         final_output_source=final_output_source,
-        generative_mesh_requested=generative_mesh,
-        generative_mesh_used=generative_mesh_used,
-        generative_mesh_backend=generative_mesh_backend,
         object_mask_backend=object_mask_backend,
         camera_path_m=_camera_path_m(frames),
         camera_extent_m=_camera_extent_m(frames),
@@ -143,8 +117,6 @@ def reconstruct_scan(
         final_output=str(final_output),
         lidar_output=str(lidar_output),
         mesh_output=str(mesh_output) if mesh_output else None,
-        metric_mesh_output=str(metric_mesh_output) if metric_mesh_output else None,
-        generative_mesh_output=str(generative_mesh_output) if generative_mesh_output else None,
         tsdf_output=str(tsdf_output) if tsdf_output else None,
         vggt_output=str(vggt_output) if vggt_output else None,
         warnings=warnings,

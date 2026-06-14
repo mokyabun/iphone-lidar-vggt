@@ -43,7 +43,6 @@ def create_job(
     preserve_color: bool = True,
     extract_object: bool = False,
     reconstruct_mesh: bool = False,
-    generative_mesh: bool = False,
 ) -> dict[str, object]:
     job_id = uuid.uuid4().hex
     job_dir = RUN_ROOT / job_id
@@ -61,7 +60,6 @@ def create_job(
         preserve_color=preserve_color,
         extract_object=extract_object,
         reconstruct_mesh=reconstruct_mesh,
-        generative_mesh=generative_mesh,
     )
 
     return {"job_id": job_id, "metrics": metrics.model_dump()}
@@ -74,7 +72,6 @@ def reconstruct_now(
     preserve_color: bool = True,
     extract_object: bool = False,
     reconstruct_mesh: bool = False,
-    generative_mesh: bool = False,
 ) -> FileResponse:
     job_id = uuid.uuid4().hex
     job_dir = RUN_ROOT / job_id
@@ -92,7 +89,6 @@ def reconstruct_now(
         preserve_color=preserve_color,
         extract_object=extract_object,
         reconstruct_mesh=reconstruct_mesh,
-        generative_mesh=generative_mesh,
     )
 
     result_path = Path(metrics.final_output)
@@ -145,7 +141,6 @@ def _run_reconstruction(
     preserve_color: bool,
     extract_object: bool,
     reconstruct_mesh: bool,
-    generative_mesh: bool,
 ):
     if not _RECONSTRUCTION_LOCK.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="Another reconstruction is already running. Wait for it to finish and retry.")
@@ -153,8 +148,7 @@ def _run_reconstruction(
     started = time.monotonic()
     print(
         f"[api] reconstruction start package={package_path} "
-        f"vggt={run_vggt} color={preserve_color} object={extract_object} "
-        f"mesh={reconstruct_mesh} pretty={generative_mesh}",
+        f"vggt={run_vggt} color={preserve_color} object={extract_object} mesh={reconstruct_mesh}",
         flush=True,
     )
     try:
@@ -165,7 +159,6 @@ def _run_reconstruction(
             preserve_color=preserve_color,
             extract_object=extract_object,
             reconstruct_mesh=reconstruct_mesh,
-            generative_mesh=generative_mesh,
         )
     except HTTPException:
         raise

@@ -20,7 +20,6 @@ def main(
     preserve_color: bool = typer.Option(True, "--preserve-color/--no-preserve-color", help="Write RGB colors when available."),
     extract_object: bool = typer.Option(False, "--extract-object", help="Mask the central object before reconstruction."),
     reconstruct_mesh: bool = typer.Option(False, "--reconstruct-mesh", help="Run LiDAR TSDF mesh reconstruction."),
-    generative_mesh: bool = typer.Option(False, "--generative-mesh", help="Run optional SPAR3D-style pretty mesh reconstruction."),
 ) -> None:
     metrics = reconstruct_scan(
         package,
@@ -32,7 +31,6 @@ def main(
         preserve_color=preserve_color,
         extract_object=extract_object,
         reconstruct_mesh=reconstruct_mesh,
-        generative_mesh=generative_mesh,
     )
     typer.echo(metrics.model_dump_json(indent=2))
 

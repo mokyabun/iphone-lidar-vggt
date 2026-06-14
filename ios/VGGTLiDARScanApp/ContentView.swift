@@ -7,7 +7,6 @@ struct ContentView: View {
     @AppStorage("preserveColor") private var preserveColor = true
     @AppStorage("extractObject") private var extractObject = true
     @AppStorage("reconstructMesh") private var reconstructMesh = false
-    @AppStorage("generativeMesh") private var generativeMesh = false
     @State private var showResult = false
 
     var body: some View {
@@ -52,18 +51,6 @@ struct ContentView: View {
                 .toggleStyle(.switch)
                 .tint(.green)
 
-                Toggle(isOn: $generativeMesh) {
-                    Label("SPAR3D", systemImage: "wand.and.stars")
-                }
-                .toggleStyle(.switch)
-                .tint(.pink)
-                .onChange(of: generativeMesh) {
-                    if generativeMesh {
-                        extractObject = true
-                        reconstructMesh = true
-                    }
-                }
-
                 if let errorText = scanner.lastErrorText {
                     Text(errorText)
                         .font(.footnote)
@@ -99,8 +86,7 @@ struct ContentView: View {
                                     runVGGT: runVGGT,
                                     preserveColor: preserveColor,
                                     extractObject: extractObject,
-                                    reconstructMesh: reconstructMesh,
-                                    generativeMesh: generativeMesh
+                                    reconstructMesh: reconstructMesh
                                 )
                                 showResult = scanner.resultURL != nil
                             }

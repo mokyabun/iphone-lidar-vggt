@@ -75,8 +75,6 @@ Results include:
 
 - `scan_lidar_points.ply`
 - `scan_lidar_tsdf.ply` when Open3D TSDF succeeds
-- `scan_object_mesh.ply` for the metric LiDAR mesh
-- `scan_object_pretty_mesh.ply` when SPAR3D succeeds
 - `scan_vggt_points.ply` when VGGT succeeds
 - `scan_final.ply`
 - `metrics.json`
@@ -142,7 +140,7 @@ VGGT_MAX_IMAGES=12
 VGGT_PRELOAD=1
 SCAN_MAX_FRAMES=24
 SCAN_RUN_TSDF=0
-MESH_METHOD=printable_metric
+MESH_METHOD=object_tsdf
 OBJECT_MASK_BACKEND=sam3_depth
 OBJECT_SAM_MODEL=sam3.pt
 ```
@@ -169,36 +167,6 @@ To skip VGGT checkpoint predownload for faster pod startup, set:
 
 ```bash
 APP_PREFETCH_VGGT=0
-```
-
-## Optional SPAR3D Mesh
-
-The app's `SPAR3D` toggle generates a textured single-image mesh from the best
-masked frame, then uniformly scales and aligns it to the LiDAR object points.
-The metric LiDAR mesh remains the automatic fallback if SPAR3D is unavailable
-or fails.
-
-SPAR3D weights are gated. Accept the model conditions at
-`https://huggingface.co/stabilityai/stable-point-aware-3d`, create a Hugging
-Face read token, and set these RunPod environment variables:
-
-```bash
-HF_TOKEN=hf_...
-APP_PREPARE_SPAR3D=1
-APP_PREFETCH_SPAR3D=1
-```
-
-The first pod start clones SPAR3D into `/workspace/cache/spar3d`, installs its
-pinned dependencies into an isolated venv, and downloads the model. Later
-starts reuse both caches. An A40 can use the default mode; set
-`SPAR3D_LOW_VRAM=1` only on smaller GPUs.
-
-Useful overrides:
-
-```bash
-SPAR3D_TEXTURE_RESOLUTION=1024
-GENERATIVE_MESH_TIMEOUT_SECONDS=1200
-GENERATIVE_CROP_PADDING=0.25
 ```
 
 ## Docker

@@ -11,8 +11,6 @@ APP_INSTALL_EXTRAS="${APP_INSTALL_EXTRAS:-reconstruction,vggt,segmentation}"
 APP_INSTALL_APT="${APP_INSTALL_APT:-1}"
 APP_PREPARE_VGGT="${APP_PREPARE_VGGT:-1}"
 APP_PREFETCH_VGGT="${APP_PREFETCH_VGGT:-1}"
-APP_PREPARE_SPAR3D="${APP_PREPARE_SPAR3D:-auto}"
-APP_PREFETCH_SPAR3D="${APP_PREFETCH_SPAR3D:-1}"
 PYTHON_BIN="${PYTHON_BIN:-}"
 
 export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
@@ -27,14 +25,6 @@ export TORCH_NUM_INTEROP_THREADS="${TORCH_NUM_INTEROP_THREADS:-1}"
 export VGGT_AUTO_DOWNLOAD="${VGGT_AUTO_DOWNLOAD:-1}"
 export VGGT_CACHE_ROOT="${VGGT_CACHE_ROOT:-/workspace/cache/vggt-lidar}"
 export HF_HOME="${HF_HOME:-/workspace/cache/vggt-lidar/huggingface}"
-export SPAR3D_REPO_URL="${SPAR3D_REPO_URL:-https://github.com/Stability-AI/stable-point-aware-3d.git}"
-export SPAR3D_REPO_DIR="${SPAR3D_REPO_DIR:-/workspace/cache/spar3d}"
-export SPAR3D_VENV="${SPAR3D_VENV:-/workspace/cache/spar3d-venv}"
-export SPAR3D_PYTHON="${SPAR3D_PYTHON:-${SPAR3D_VENV}/bin/python}"
-export SPAR3D_MODEL_ID="${SPAR3D_MODEL_ID:-stabilityai/stable-point-aware-3d}"
-export SPAR3D_LOW_VRAM="${SPAR3D_LOW_VRAM:-0}"
-export SPAR3D_TEXTURE_RESOLUTION="${SPAR3D_TEXTURE_RESOLUTION:-1024}"
-export GENERATIVE_MESH_TIMEOUT_SECONDS="${GENERATIVE_MESH_TIMEOUT_SECONDS:-1200}"
 export YOLO_CONFIG_DIR="${YOLO_CONFIG_DIR:-/workspace/cache/ultralytics}"
 export ULTRALYTICS_SETTINGS="${ULTRALYTICS_SETTINGS:-/workspace/cache/ultralytics/settings.json}"
 export SCAN_MAX_FRAMES="${SCAN_MAX_FRAMES:-24}"
@@ -123,12 +113,10 @@ prepare_cache_dirs() {
   mkdir -p \
     "${VGGT_CACHE_ROOT}" \
     "${HF_HOME}" \
-    "${SPAR3D_REPO_DIR}" \
-    "${SPAR3D_VENV}" \
     "${YOLO_CONFIG_DIR}" \
     "${YOLO_CONFIG_DIR}/Ultralytics" \
     "$(dirname "${ULTRALYTICS_SETTINGS}")"
-  chmod -R a+rwX "${VGGT_CACHE_ROOT}" "${SPAR3D_REPO_DIR}" "${SPAR3D_VENV}" "${YOLO_CONFIG_DIR}" || true
+  chmod -R a+rwX "${VGGT_CACHE_ROOT}" "${YOLO_CONFIG_DIR}" || true
 }
 
 backup_non_git_dir() {
@@ -201,59 +189,6 @@ prepare_vggt() {
   fi
 }
 
-prepare_spar3d() {
-  local prepare="${APP_PREPARE_SPAR3D}"
-  local revision
-  local installed_revision=""
-  if [ "${prepare}" = "auto" ]; then
-    if [ -n "${HF_TOKEN:-}" ] || [ -n "${HUGGING_FACE_HUB_TOKEN:-}" ]; then
-      prepare=1
-    elif [ -x "${SPAR3D_PYTHON}" ] && [ -d "${SPAR3D_REPO_DIR}/.git" ]; then
-      log "Using cached SPAR3D installation."
-      return 0
-    else
-      prepare=0
-    fi
-  fi
-  if [ "${prepare}" != "1" ]; then
-    log "Skipping SPAR3D preparation. Set HF_TOKEN and APP_PREPARE_SPAR3D=1 to enable Pretty Mesh."
-    return 0
-  fi
-
-  if [ -d "${SPAR3D_REPO_DIR}/.git" ]; then
-    log "Updating SPAR3D repository."
-    git -C "${SPAR3D_REPO_DIR}" fetch --depth 1 origin main
-    git -C "${SPAR3D_REPO_DIR}" reset --hard origin/main
-  else
-    log "Cloning SPAR3D repository."
-    rm -rf "${SPAR3D_REPO_DIR}"
-    git clone --depth 1 "${SPAR3D_REPO_URL}" "${SPAR3D_REPO_DIR}"
-  fi
-
-  revision="$(git -C "${SPAR3D_REPO_DIR}" rev-parse HEAD)"
-  if [ -f "${SPAR3D_VENV}/.spar3d-revision" ]; then
-    installed_revision="$(<"${SPAR3D_VENV}/.spar3d-revision")"
-  fi
-  if [ ! -x "${SPAR3D_PYTHON}" ] || [ "${installed_revision}" != "${revision}" ]; then
-    log "Preparing isolated SPAR3D Python environment."
-    uv venv --clear --python "${PYTHON_BIN}" --system-site-packages "${SPAR3D_VENV}"
-    uv pip install --python "${SPAR3D_PYTHON}" "setuptools==69.5.1" wheel
-    (
-      cd "${SPAR3D_REPO_DIR}"
-      uv pip install --python "${SPAR3D_PYTHON}" -r requirements.txt
-    )
-    printf '%s\n' "${revision}" > "${SPAR3D_VENV}/.spar3d-revision"
-  else
-    log "SPAR3D dependencies are already current."
-  fi
-
-  if [ "${APP_PREFETCH_SPAR3D}" = "1" ]; then
-    log "Prefetching gated SPAR3D weights."
-    "${SPAR3D_PYTHON}" -c \
-      "from huggingface_hub import snapshot_download; snapshot_download('${SPAR3D_MODEL_ID}')"
-  fi
-}
-
 start_app() {
   cd "${APP_DIR}"
 
@@ -277,7 +212,6 @@ main() {
   sync_repo
   install_python_packages
   prepare_vggt
-  prepare_spar3d
   start_app "$@"
 }
 
