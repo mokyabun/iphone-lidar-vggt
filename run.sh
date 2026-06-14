@@ -268,6 +268,12 @@ prepare_reconviagen() {
     log "ReconViaGen environment is already current."
   fi
 
+  if ! "${RECONVIAGEN_PYTHON}" -c "import o_voxel" >/dev/null 2>&1; then
+    log "Installing the nested ReconViaGen o-voxel extension."
+    "${MICROMAMBA_BIN}" run -p "${RECONVIAGEN_ENV}" pip install \
+      "${RECONVIAGEN_REPO_DIR}/wheels/TRELLIS.2/o-voxel" --no-build-isolation
+  fi
+
   if [ "${APP_PREFETCH_RECONVIAGEN}" = "1" ]; then
     log "Prefetching ReconViaGen and TRELLIS.2 weights."
     "${MICROMAMBA_BIN}" run -p "${RECONVIAGEN_ENV}" python -c \

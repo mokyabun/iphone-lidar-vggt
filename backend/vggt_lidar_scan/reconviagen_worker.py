@@ -13,8 +13,15 @@ class ReconViaGenRuntime:
     def __init__(self) -> None:
         repo_dir = Path(os.environ.get("RECONVIAGEN_REPO_DIR", "/workspace/cache/ReconViaGen"))
         trellis2_dir = repo_dir / "wheels" / "TRELLIS.2"
-        sys.path.insert(0, str(repo_dir))
-        sys.path.insert(0, str(trellis2_dir))
+        vendor_dirs = [
+            repo_dir,
+            trellis2_dir,
+            repo_dir / "wheels" / "vggt",
+            repo_dir / "wheels" / "dust3r",
+            repo_dir / "wheels" / "mast3r",
+        ]
+        for vendor_dir in reversed(vendor_dirs):
+            sys.path.insert(0, str(vendor_dir))
         os.environ.setdefault("SPCONV_ALGO", "native")
         os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
         os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
