@@ -16,6 +16,7 @@ dependencies = [
 [project.optional-dependencies]
 reconstruction = [
   "open3d>=0.18.0",
+  "trimesh>=4.4.1",
 ]
 vggt = [
   "torch>=2.4.0",

@@ -101,7 +101,8 @@ final class ScanSessionManager: NSObject, ObservableObject {
         runVGGT: Bool,
         preserveColor: Bool,
         extractObject: Bool,
-        reconstructMesh: Bool
+        reconstructMesh: Bool,
+        generativeMesh: Bool
     ) async {
         guard let lastPackageURL else { return }
         guard let baseURL = URL(string: backendBaseURL) else {
@@ -119,10 +120,13 @@ final class ScanSessionManager: NSObject, ObservableObject {
                 runVGGT: runVGGT,
                 preserveColor: preserveColor,
                 extractObject: extractObject,
-                reconstructMesh: reconstructMesh
+                reconstructMesh: reconstructMesh,
+                generativeMesh: generativeMesh
             )
             resultURL = result.outputURL
-            if let metrics = result.metrics, metrics.finalOutputType == "mesh", metrics.meshFaces > 0 {
+            if result.metrics?.generativeMeshUsed == true {
+                statusText = "SPAR3D mesh ready"
+            } else if let metrics = result.metrics, metrics.finalOutputType == "mesh", metrics.meshFaces > 0 {
                 statusText = "Mesh ready"
             } else if result.metrics?.finalOutputSource == "lidar_metric" {
                 statusText = "Metric points ready"

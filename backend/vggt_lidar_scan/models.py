@@ -55,6 +55,9 @@ class ReconstructionMetrics(BaseModel):
     mesh_method: str | None = None
     final_output_type: Literal["point_cloud", "mesh"] = "point_cloud"
     final_output_source: str = "lidar"
+    generative_mesh_requested: bool = False
+    generative_mesh_used: bool = False
+    generative_mesh_backend: str | None = None
     object_mask_backend: str | None = None
     camera_path_m: float | None = None
     camera_extent_m: list[float] | None = None
@@ -67,6 +70,8 @@ class ReconstructionMetrics(BaseModel):
     final_output: str
     lidar_output: str | None = None
     mesh_output: str | None = None
+    metric_mesh_output: str | None = None
+    generative_mesh_output: str | None = None
     tsdf_output: str | None = None
     vggt_output: str | None = None
     warnings: list[str] = Field(default_factory=list)
