@@ -16,6 +16,14 @@
 		AA0000000000000000000007 /* ZipWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000017 /* ZipWriter.swift */; };
 		AA0000000000000000000008 /* BackendClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000019 /* BackendClient.swift */; };
 		AA0000000000000000000009 /* PointCloudPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000001A /* PointCloudPreview.swift */; };
+		AA000000000000000000000A /* PLYModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000001B /* PLYModel.swift */; };
+		AA000000000000000000000B /* PLYParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000001C /* PLYParser.swift */; };
+		AA000000000000000000000C /* PLYGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000001D /* PLYGeometry.swift */; };
+		AA000000000000000000000D /* ScenePLYView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000001E /* ScenePLYView.swift */; };
+		AA000000000000000000000E /* PipelineSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000001F /* PipelineSelector.swift */; };
+		AA000000000000000000000F /* BackendSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000021 /* BackendSettingsView.swift */; };
+		AA00000000000000000000B0 /* ResultPreviewScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000022 /* ResultPreviewScreen.swift */; };
+		AA00000000000000000000B1 /* BackendModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000023 /* BackendModels.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -30,6 +38,14 @@
 		AA0000000000000000000018 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		AA0000000000000000000019 /* BackendClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendClient.swift; sourceTree = "<group>"; };
 		AA000000000000000000001A /* PointCloudPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PointCloudPreview.swift; sourceTree = "<group>"; };
+		AA000000000000000000001B /* PLYModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PLYModel.swift; sourceTree = "<group>"; };
+		AA000000000000000000001C /* PLYParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PLYParser.swift; sourceTree = "<group>"; };
+		AA000000000000000000001D /* PLYGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PLYGeometry.swift; sourceTree = "<group>"; };
+		AA000000000000000000001E /* ScenePLYView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScenePLYView.swift; sourceTree = "<group>"; };
+		AA000000000000000000001F /* PipelineSelector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PipelineSelector.swift; sourceTree = "<group>"; };
+		AA0000000000000000000021 /* BackendSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendSettingsView.swift; sourceTree = "<group>"; };
+		AA0000000000000000000022 /* ResultPreviewScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultPreviewScreen.swift; sourceTree = "<group>"; };
+		AA0000000000000000000023 /* BackendModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendModels.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -62,8 +78,16 @@
 				AA0000000000000000000015 /* ScanPackageExporter.swift */,
 				AA0000000000000000000016 /* ScanModels.swift */,
 				AA0000000000000000000017 /* ZipWriter.swift */,
+				AA0000000000000000000023 /* BackendModels.swift */,
 				AA0000000000000000000019 /* BackendClient.swift */,
 				AA000000000000000000001A /* PointCloudPreview.swift */,
+				AA000000000000000000001F /* PipelineSelector.swift */,
+				AA0000000000000000000021 /* BackendSettingsView.swift */,
+				AA0000000000000000000022 /* ResultPreviewScreen.swift */,
+				AA000000000000000000001E /* ScenePLYView.swift */,
+				AA000000000000000000001B /* PLYModel.swift */,
+				AA000000000000000000001C /* PLYParser.swift */,
+				AA000000000000000000001D /* PLYGeometry.swift */,
 			);
 			path = VGGTLiDARScanApp;
 			sourceTree = "<group>";
@@ -153,6 +177,14 @@
 				AA0000000000000000000007 /* ZipWriter.swift in Sources */,
 				AA0000000000000000000008 /* BackendClient.swift in Sources */,
 				AA0000000000000000000009 /* PointCloudPreview.swift in Sources */,
+				AA000000000000000000000A /* PLYModel.swift in Sources */,
+				AA000000000000000000000B /* PLYParser.swift in Sources */,
+				AA000000000000000000000C /* PLYGeometry.swift in Sources */,
+				AA000000000000000000000D /* ScenePLYView.swift in Sources */,
+				AA000000000000000000000E /* PipelineSelector.swift in Sources */,
+				AA000000000000000000000F /* BackendSettingsView.swift in Sources */,
+				AA00000000000000000000B0 /* ResultPreviewScreen.swift in Sources */,
+				AA00000000000000000000B1 /* BackendModels.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
