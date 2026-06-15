@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import os
 import shutil
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
-from .geometry import apply_confidence_mask, camera_to_world_for_depth, colors_for_depth_pixels, keyframe_indices, unproject_depth
+from .geometry import camera_to_world_for_depth, colors_for_depth_pixels, keyframe_indices, unproject_depth
 from .io import open_scan_package, read_confidence, read_depth, read_frames, read_image, write_json
 from .models import FrameRecord, ReconstructionMetrics
 from .ply import count_ply_elements, write_point_cloud_ply
@@ -14,6 +16,14 @@ from .point_cloud import clean_point_cloud, temporal_consistency_filter
 from .reconviagen import run_reconviagen
 from .segmentation import merge_propagated_mask, object_mask, propagate_object_mask
 from .vggt_adapter import run_vggt
+
+
+@dataclass(frozen=True)
+class _FramePointCloud:
+    points: np.ndarray
+    colors: np.ndarray
+    all_points: np.ndarray
+    frame_ids: np.ndarray
 
 
 def reconstruct_scan(
@@ -46,10 +56,18 @@ def reconstruct_scan(
             flush=True,
         )
         object_masks = build_object_masks(root, selected) if extract_object else None
-        points, colors = build_lidar_point_cloud(root, selected, stride, confidence_minimum, preserve_color, object_masks)
+        points, colors, lidar_points_all = build_lidar_point_cloud_with_reference(
+            root,
+            selected,
+            stride,
+            confidence_minimum,
+            preserve_color,
+            object_masks,
+        )
         lidar_raw_points = int(points.shape[0])
         points, colors, lidar_removed_points = clean_point_cloud(points, colors, object_mode=extract_object)
-        lidar_points_all = build_lidar_point_cloud(root, selected, stride, confidence_minimum, preserve_color, None)[0] if extract_object else points
+        if not extract_object:
+            lidar_points_all = points
 
         lidar_output = output_dir / "scan_lidar_points.ply"
         write_point_cloud_ply(lidar_output, points, colors)
@@ -178,38 +196,127 @@ def build_lidar_point_cloud(
     preserve_color: bool = True,
     object_masks: dict[str, np.ndarray] | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
+    points, colors, _ = build_lidar_point_cloud_with_reference(
+        root,
+        frames,
+        stride,
+        confidence_minimum,
+        preserve_color,
+        object_masks,
+    )
+    return points, colors
+
+
+def build_lidar_point_cloud_with_reference(
+    root: Path,
+    frames: list[FrameRecord],
+    stride: int,
+    confidence_minimum: int,
+    preserve_color: bool = True,
+    object_masks: dict[str, np.ndarray] | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    frame_clouds = _collect_lidar_frame_clouds(root, frames, stride, confidence_minimum, preserve_color, object_masks)
     point_chunks: list[np.ndarray] = []
     color_chunks: list[np.ndarray] = []
     frame_id_chunks: list[np.ndarray] = []
+    all_point_chunks: list[np.ndarray] = []
 
-    for frame_index, frame in enumerate(frames):
-        depth = read_depth(root, frame)
-        confidence = read_confidence(root, frame)
-        image = np.asarray(read_image(root, frame))
-        intrinsics = np.asarray(frame.intrinsics_depth, dtype=np.float32)
-        camera_to_world = np.asarray(frame.camera_to_world, dtype=np.float32)
-
-        points, pixels = unproject_depth(depth, intrinsics, camera_to_world, stride=stride)
-        colors = colors_for_depth_pixels(image, frame, pixels) if preserve_color else np.full((points.shape[0], 3), 220, dtype=np.uint8)
-        if object_masks and frame.frame_id in object_masks and points.size:
-            mask = object_masks[frame.frame_id]
-            keep = mask[pixels[:, 1], pixels[:, 0]]
-            points = points[keep]
-            colors = colors[keep]
-            pixels = pixels[keep]
-        points, colors = apply_confidence_mask(points, colors, pixels, confidence, confidence_minimum)
-        if points.size:
-            point_chunks.append(points)
-            color_chunks.append(colors)
-            frame_id_chunks.append(np.full(points.shape[0], frame_index, dtype=np.int16))
+    for frame_cloud in frame_clouds:
+        if frame_cloud.points.size:
+            point_chunks.append(frame_cloud.points)
+            color_chunks.append(frame_cloud.colors)
+            frame_id_chunks.append(frame_cloud.frame_ids)
+        if frame_cloud.all_points.size:
+            all_point_chunks.append(frame_cloud.all_points)
 
     if not point_chunks:
-        return np.empty((0, 3), dtype=np.float32), np.empty((0, 3), dtype=np.uint8)
+        all_points = np.concatenate(all_point_chunks, axis=0) if all_point_chunks else np.empty((0, 3), dtype=np.float32)
+        return np.empty((0, 3), dtype=np.float32), np.empty((0, 3), dtype=np.uint8), all_points
     points = np.concatenate(point_chunks, axis=0)
     colors = np.concatenate(color_chunks, axis=0)
     if object_masks:
         points, colors = temporal_consistency_filter(points, colors, np.concatenate(frame_id_chunks, axis=0))
-    return points, colors
+    all_points = np.concatenate(all_point_chunks, axis=0) if all_point_chunks else points
+    return points, colors, all_points
+
+
+def _collect_lidar_frame_clouds(
+    root: Path,
+    frames: list[FrameRecord],
+    stride: int,
+    confidence_minimum: int,
+    preserve_color: bool,
+    object_masks: dict[str, np.ndarray] | None,
+) -> list[_FramePointCloud]:
+    if not frames:
+        return []
+    workers = min(len(frames), _env_int("SCAN_FRAME_WORKERS", min(4, os.cpu_count() or 1)))
+    if workers <= 1:
+        return [
+            _build_lidar_frame_cloud(root, frame, frame_index, stride, confidence_minimum, preserve_color, object_masks)
+            for frame_index, frame in enumerate(frames)
+        ]
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        return list(
+            executor.map(
+                lambda item: _build_lidar_frame_cloud(
+                    root,
+                    item[1],
+                    item[0],
+                    stride,
+                    confidence_minimum,
+                    preserve_color,
+                    object_masks,
+                ),
+                enumerate(frames),
+            )
+        )
+
+
+def _build_lidar_frame_cloud(
+    root: Path,
+    frame: FrameRecord,
+    frame_index: int,
+    stride: int,
+    confidence_minimum: int,
+    preserve_color: bool,
+    object_masks: dict[str, np.ndarray] | None,
+) -> _FramePointCloud:
+    depth = read_depth(root, frame)
+    confidence = read_confidence(root, frame)
+    image = np.asarray(read_image(root, frame)) if preserve_color else None
+    intrinsics = np.asarray(frame.intrinsics_depth, dtype=np.float32)
+    camera_to_world = np.asarray(frame.camera_to_world, dtype=np.float32)
+
+    points, pixels = unproject_depth(depth, intrinsics, camera_to_world, stride=stride)
+    if points.size == 0:
+        empty_points = np.empty((0, 3), dtype=np.float32)
+        empty_colors = np.empty((0, 3), dtype=np.uint8)
+        return _FramePointCloud(empty_points, empty_colors, empty_points, np.empty((0,), dtype=np.int16))
+
+    colors = colors_for_depth_pixels(image, frame, pixels) if image is not None else np.full((points.shape[0], 3), 220, dtype=np.uint8)
+    keep = _confidence_keep(pixels, confidence, confidence_minimum)
+    all_points = points[keep]
+
+    if object_masks and frame.frame_id in object_masks:
+        mask = object_masks[frame.frame_id]
+        keep = keep & mask[pixels[:, 1], pixels[:, 0]]
+
+    frame_points = points[keep]
+    frame_colors = colors[keep]
+    return _FramePointCloud(
+        frame_points,
+        frame_colors,
+        all_points,
+        np.full(frame_points.shape[0], frame_index, dtype=np.int16),
+    )
+
+
+def _confidence_keep(pixels: np.ndarray, confidence: np.ndarray | None, minimum: int) -> np.ndarray:
+    if confidence is None or pixels.size == 0:
+        return np.ones(pixels.shape[0], dtype=bool)
+    values = confidence[pixels[:, 1], pixels[:, 0]]
+    return values >= minimum
 
 
 def build_object_masks(root: Path, frames: list[FrameRecord]) -> dict[str, np.ndarray]:
@@ -380,8 +487,8 @@ def try_open3d_tsdf(
         return None
 
     try:
-        voxel_length = _env_float("OBJECT_TSDF_VOXEL_METERS", 0.008)
-        sdf_trunc = _env_float("OBJECT_TSDF_TRUNC_METERS", 0.035)
+        voxel_length = _env_float("OBJECT_TSDF_VOXEL_METERS", 0.004)
+        sdf_trunc = max(_env_float("OBJECT_TSDF_TRUNC_METERS", 0.02), voxel_length * 4.0)
         depth_trunc = _env_float("OBJECT_TSDF_DEPTH_TRUNC_METERS", 4.0)
         volume = o3d.pipelines.integration.ScalableTSDFVolume(
             voxel_length=voxel_length,
@@ -483,9 +590,13 @@ def _postprocess_open3d_mesh(mesh, o3d):  # noqa: ANN001, ANN201 - Open3D runtim
             remove = labels_np != keep_label
             mesh.remove_triangles_by_mask(remove.tolist())
             mesh.remove_unreferenced_vertices()
-    smoothing_iterations = _env_int("OBJECT_MESH_SMOOTH_ITERATIONS", 1)
+    smoothing_iterations = _env_int("OBJECT_MESH_SMOOTH_ITERATIONS", 3)
     if smoothing_iterations > 0 and len(mesh.triangles):
-        mesh = mesh.filter_smooth_simple(number_of_iterations=smoothing_iterations)
+        smoothing_method = os.environ.get("OBJECT_MESH_SMOOTH_METHOD", "taubin").strip().lower()
+        if smoothing_method == "simple":
+            mesh = mesh.filter_smooth_simple(number_of_iterations=smoothing_iterations)
+        else:
+            mesh = mesh.filter_smooth_taubin(number_of_iterations=smoothing_iterations)
     target_triangles = _env_int("OBJECT_MESH_MAX_TRIANGLES", 120000)
     if len(mesh.triangles) > target_triangles:
         mesh = mesh.simplify_quadric_decimation(target_number_of_triangles=target_triangles)

@@ -46,23 +46,41 @@ def run_vggt(
     object_masks: dict[str, np.ndarray] | None = None,
 ) -> tuple[Path, int]:
     frames = _limit_vggt_frames(frames)
-    image_dir = output_dir / "vggt_scene" / "images"
-    image_dir.mkdir(parents=True, exist_ok=True)
+    runner = os.environ.get("VGGT_RUNNER")
+    if runner:
+        image_paths = _vggt_image_paths(root, frames, output_dir, materialize=True)
+        image_dir = image_paths[0].parent if image_paths else output_dir / "vggt_scene" / "images"
+        return _run_external_vggt(runner, image_dir, output_dir)
+    image_paths = _vggt_image_paths(root, frames, output_dir, materialize=False)
+    return _run_python_vggt(image_paths, output_dir, frames, preserve_color, object_masks)
 
+
+def _vggt_image_paths(root: Path, frames: list[FrameRecord], output_dir: Path, *, materialize: bool) -> list[Path]:
+    image_dir = output_dir / "vggt_scene" / "images"
     image_paths: list[Path] = []
+    if materialize:
+        image_dir.mkdir(parents=True, exist_ok=True)
+
     for index, frame in enumerate(frames):
         source = root / frame.image_path
+        if source.exists() and not materialize:
+            image_paths.append(source)
+            continue
+
         target = image_dir / f"{index:06d}.jpg"
+        image_dir.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            target.unlink()
         if source.exists():
-            shutil.copyfile(source, target)
+            try:
+                os.link(source, target)
+            except OSError:
+                shutil.copyfile(source, target)
         else:
             read_image(root, frame).save(target, quality=94)
         image_paths.append(target)
 
-    runner = os.environ.get("VGGT_RUNNER")
-    if runner:
-        return _run_external_vggt(runner, image_dir, output_dir)
-    return _run_python_vggt(image_paths, output_dir, frames, preserve_color, object_masks)
+    return image_paths
 
 
 def _run_external_vggt(runner: str, image_dir: Path, output_dir: Path) -> tuple[Path, int]:
@@ -121,6 +139,8 @@ def _run_python_vggt(
 
     output = output_dir / "scan_vggt_points.ply"
     write_point_cloud_ply(output, points, colors)
+    if runtime.device == "cuda" and _env_bool("VGGT_EMPTY_CACHE_AFTER_RUN", False):
+        torch.cuda.empty_cache()
     return output, int(points.shape[0])
 
 
@@ -154,6 +174,11 @@ def _load_vggt_runtime() -> _VGGTRuntime:
         if device == "cuda":
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.allow_tf32 = True
+            torch.backends.cudnn.benchmark = _env_bool("TORCH_CUDNN_BENCHMARK", True)
+            try:
+                torch.set_float32_matmul_precision(os.environ.get("TORCH_FLOAT32_MATMUL_PRECISION", "high"))
+            except Exception:
+                pass
 
         dtype = torch.float32
         if device == "cuda":
@@ -227,6 +252,13 @@ def _env_int(name: str, default: int) -> int:
         return max(1, int(value))
     except ValueError:
         return default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value not in {"0", "false", "False", "no", "No"}
 
 
 def _configure_torch_threads(torch: Any) -> None:

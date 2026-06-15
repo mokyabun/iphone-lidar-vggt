@@ -66,7 +66,7 @@ def clean_point_cloud(
     if voxel_size is None:
         voxel_size = _env_float(
             "OBJECT_POINT_CLOUD_VOXEL_METERS" if object_mode else "SCENE_POINT_CLOUD_VOXEL_METERS",
-            0.002 if object_mode else 0.005,
+            0.0,
         )
 
     try:
