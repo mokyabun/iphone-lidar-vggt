@@ -67,6 +67,15 @@ ensure_env() {
   fi
 }
 
+verify_torch() {
+  log "Checking PyTorch in ${RECONVIAGEN_ENV_NAME}."
+  micromamba run -n "${RECONVIAGEN_ENV_NAME}" python - <<'PY'
+import torch
+
+print(f"[prepare_reconviagen] torch={torch.__version__} cuda={torch.version.cuda} available={torch.cuda.is_available()}")
+PY
+}
+
 pip_install_if_missing() {
   local import_name="$1"
   shift
@@ -116,6 +125,6 @@ fi
 
 sync_repo
 ensure_env
+verify_torch
 run_reconviagen_setup
 log "ReconViaGen is ready in micromamba env ${RECONVIAGEN_ENV_NAME}."
-

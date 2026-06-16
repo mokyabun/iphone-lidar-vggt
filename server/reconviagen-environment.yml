@@ -1,9 +1,15 @@
 name: reconviagen-v05
 channels:
+  - pytorch
+  - nvidia
   - conda-forge
 dependencies:
   - python=3.10
   - pip
+  - pytorch=2.2.*
+  - torchvision
+  - torchaudio
+  - pytorch-cuda=12.1
   - git
   - git-lfs
   - cmake
