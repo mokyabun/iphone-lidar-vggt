@@ -73,6 +73,8 @@ verify_torch() {
 import torch
 
 print(f"[prepare_reconviagen] torch={torch.__version__} cuda={torch.version.cuda} available={torch.cuda.is_available()}")
+if not torch.__version__.startswith("2.4."):
+    raise SystemExit("[prepare_reconviagen] ReconViaGen v0.5 CUDA extensions require PyTorch 2.4.x.")
 PY
 }
 
