@@ -80,12 +80,18 @@ PY
 }
 
 install_base_packages() {
-  # setup.sh --basic installs the pure-Python packages ReconViaGen needs
-  # (easydict, utils3d, kornia, rembg, …). This is fast with pip's cache
-  # and idempotent, so we always run it to keep packages in sync.
-  log "Installing ReconViaGen base Python packages (setup.sh --basic)."
-  micromamba run -n "${RECONVIAGEN_ENV_NAME}" bash -lc \
-    "cd '${RECONVIAGEN_REPO_DIR}' && . ./setup.sh --basic"
+  # We install base Python packages directly instead of via setup.sh --basic
+  # because setup.sh pins huggingface_hub==0.33.4 alongside transformers==5.3.0,
+  # and those two pinned versions have conflicting sub-dependencies.
+  # Using unpinned versions (except kornia) lets pip/conda pick compatible ones.
+  log "Installing ReconViaGen base Python packages."
+  micromamba run -n "${RECONVIAGEN_ENV_NAME}" python -m pip install --quiet \
+    imageio imageio-ffmpeg tqdm easydict opencv-python-headless scipy \
+    rembg onnxruntime open3d xatlas pyvista pymeshfix igraph lpips \
+    "kornia==0.8.2" zstandard rtree fast-simplification \
+    huggingface_hub transformers
+  pip_install_if_missing utils3d \
+    "git+https://github.com/EasternJournalist/utils3d.git@9a4eb15e4021b67b12c460c7057d642626897ec8"
 }
 
 pip_install_if_missing() {
