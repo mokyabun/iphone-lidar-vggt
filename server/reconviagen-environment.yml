@@ -1,0 +1,17 @@
+name: reconviagen-v05
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - git
+  - git-lfs
+  - cmake
+  - ninja
+  - fastapi>=0.115
+  - uvicorn>=0.30
+  - pillow>=10
+  - pydantic>=2.7
+  - pydantic-settings>=2.6
+  - huggingface_hub>=0.24
+  - packaging

@@ -36,7 +36,7 @@ The active server dependency set is intentionally small:
 - `scipy`
 - `trimesh`
 
-ReconViaGen itself is treated as an external generator. The small server owns scan parsing, crop preparation, and LiDAR metric alignment.
+ReconViaGen runs in a separate micromamba worker env so the thin API env stays small. The server owns scan parsing, crop preparation, worker orchestration, and LiDAR metric alignment.
 
 ## Server
 
@@ -48,13 +48,30 @@ chmod +x run.sh
 ./run.sh
 ```
 
-Configure the actual ReconViaGen runner with either a command:
+By default `run.sh` prepares ReconViaGen `v0.5` under `/workspace/cache/ReconViaGen`, creates the `reconviagen-v05` micromamba env, starts a local worker on `127.0.0.1:8011`, then starts the API on `0.0.0.0:8000`.
+
+RunPod entrypoint:
+
+```bash
+bash -lc 'cd /workspace && if [ ! -d iphone-lidar-vggt/.git ]; then git clone https://github.com/mokyabun/iphone-lidar-vggt.git; fi && cd iphone-lidar-vggt && git fetch origin && git reset --hard origin/main && cd server && ./run.sh'
+```
+
+Useful switches:
+
+```bash
+export APP_PREPARE_RECONVIAGEN=0   # skip ReconViaGen install/update
+export APP_START_RECONVIAGEN=0     # start only the API
+export RECONVIAGEN_REFRESH=1       # force ReconViaGen setup.sh again
+export HF_TOKEN=...                # required if gated Hugging Face weights need auth
+```
+
+You can still override the generator with a command:
 
 ```bash
 export RECONVIAGEN_COMMAND='python /path/to/reconviagen_runner.py --input-dir {input_dir} --output-path {output_path}'
 ```
 
-or a worker URL:
+or an external worker URL:
 
 ```bash
 export RECONVIAGEN_WORKER_URL='http://127.0.0.1:8011'

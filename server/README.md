@@ -1,41 +1,49 @@
 # Server Notes
 
-This server deliberately does not install ReconViaGen. It is the thin layer around ReconViaGen:
+This server keeps the app layer thin while still managing a local ReconViaGen worker:
 
 1. Parse `ScanPackage.zip`.
 2. Build a metric LiDAR object reference cloud.
 3. Produce square RGBA crops for ReconViaGen.
-4. Call an external ReconViaGen command or worker.
+4. Call the managed ReconViaGen worker.
 5. Align the generated mesh back to LiDAR scale.
 
 ## Environment
 
 ```bash
-micromamba create -y -f environment.yml
-micromamba run -n lidar-reconviagen python -m uvicorn lidar_reconviagen.api:app --host 0.0.0.0 --port 8000
-```
-
-or:
-
-```bash
 ./run.sh
 ```
 
-## ReconViaGen Hook
+`run.sh` manages two envs:
 
-Command mode:
+- `lidar-reconviagen`: small FastAPI/LiDAR alignment server.
+- `reconviagen-v05`: heavy ReconViaGen worker, prepared from `reconviagen-environment.yml`.
+
+## ReconViaGen Worker
+
+Default behavior:
+
+```bash
+APP_PREPARE_RECONVIAGEN=1 APP_START_RECONVIAGEN=1 ./run.sh
+```
+
+One-shot worker runner:
+
+```bash
+micromamba run -n reconviagen-v05 python -m reconviagen_worker.main \
+  --once \
+  --input-dir /path/to/reconviagen_views \
+  --output-path /path/to/raw_reconviagen.glb
+```
+
+External override modes are still available:
 
 ```bash
 export RECONVIAGEN_COMMAND='python /path/to/reconviagen_runner.py --input-dir {input_dir} --output-path {output_path}'
-```
-
-Worker mode:
-
-```bash
 export RECONVIAGEN_WORKER_URL='http://127.0.0.1:8011'
 ```
 
-The runner/worker must write a GLB or other `trimesh`-readable mesh to `{output_path}`.
+The command/worker must write a GLB or other `trimesh`-readable mesh to `{output_path}`.
 
 ## Smoke Test Mode
 

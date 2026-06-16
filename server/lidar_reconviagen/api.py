@@ -29,7 +29,7 @@ def capabilities() -> dict[str, object]:
     return {
         "pipeline": "reconviagen_lidar_scale",
         "state": "available" if configured else "unavailable",
-        "reason": None if configured else "Set RECONVIAGEN_COMMAND or RECONVIAGEN_WORKER_URL.",
+        "reason": None if configured else "Start with ./run.sh or set RECONVIAGEN_COMMAND/RECONVIAGEN_WORKER_URL.",
     }
 
 

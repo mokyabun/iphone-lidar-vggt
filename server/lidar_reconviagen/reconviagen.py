@@ -27,7 +27,7 @@ def generate_mesh(input_dir: Path, output_path: Path) -> None:
         return
     if not cfg.reconviagen_command:
         raise RuntimeError(
-            "RECONVIAGEN_COMMAND is not set. Example: "
+            "ReconViaGen is not configured. Start the server with ./run.sh for the managed worker, or set "
             "RECONVIAGEN_COMMAND='python /path/to/reconviagen_runner.py --input-dir {input_dir} --output-path {output_path}'"
         )
     command = cfg.reconviagen_command.format(
