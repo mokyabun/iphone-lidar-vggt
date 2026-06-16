@@ -144,6 +144,10 @@ struct BackendClient {
 
 private struct BackendJobSubmission: Decodable {
     let jobID: String
+
+    enum CodingKeys: String, CodingKey {
+        case jobID = "jobId"
+    }
 }
 
 private struct BackendJobStatus: Decodable {
