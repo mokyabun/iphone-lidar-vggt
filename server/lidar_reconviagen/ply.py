@@ -9,33 +9,15 @@ def write_point_cloud_ply(path: Path, points: np.ndarray, colors: np.ndarray | N
     path.parent.mkdir(parents=True, exist_ok=True)
     if colors is None or colors.shape[0] != points.shape[0]:
         colors = np.full((points.shape[0], 3), 200, dtype=np.uint8)
-
     with path.open("w") as handle:
         handle.write("ply\n")
         handle.write("format ascii 1.0\n")
         handle.write(f"element vertex {points.shape[0]}\n")
-        handle.write("property float x\n")
-        handle.write("property float y\n")
-        handle.write("property float z\n")
-        handle.write("property uchar red\n")
-        handle.write("property uchar green\n")
-        handle.write("property uchar blue\n")
+        handle.write("property float x\nproperty float y\nproperty float z\n")
+        handle.write("property uchar red\nproperty uchar green\nproperty uchar blue\n")
         handle.write("end_header\n")
         for point, color in zip(points, colors, strict=False):
             handle.write(
                 f"{point[0]:.6f} {point[1]:.6f} {point[2]:.6f} "
                 f"{int(color[0])} {int(color[1])} {int(color[2])}\n"
             )
-
-
-def count_ply_elements(path: Path) -> tuple[int, int]:
-    vertices = 0
-    faces = 0
-    for line in path.read_text(errors="ignore").splitlines():
-        if line.startswith("element vertex "):
-            vertices = int(line.split()[-1])
-        elif line.startswith("element face "):
-            faces = int(line.split()[-1])
-        elif line.strip() == "end_header":
-            break
-    return vertices, faces

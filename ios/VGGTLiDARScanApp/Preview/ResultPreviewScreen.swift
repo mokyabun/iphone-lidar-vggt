@@ -134,11 +134,8 @@ private struct ResultDetailsView: View {
             }
             detailRow("Frames", "\(metrics.frameCount)", systemImage: "photo.stack")
             detailRow("Keyframes", "\(metrics.selectedKeyframes)", systemImage: "key.viewfinder")
-            if let method = metrics.meshMethod {
-                detailRow("Mesh method", method, systemImage: "hammer")
-            }
-            if let maskBackend = metrics.objectMaskBackend {
-                detailRow("Object mask", maskBackend, systemImage: "scope")
+            if let inputViews = metrics.inputViews {
+                detailRow("Input views", "\(inputViews)", systemImage: "photo.on.rectangle")
             }
         }
     }
@@ -146,13 +143,9 @@ private struct ResultDetailsView: View {
     private func geometrySection(_ metrics: BackendMetrics) -> some View {
         resultSection("Geometry", systemImage: "cube.fill") {
             detailRow("LiDAR points", formatCount(metrics.lidarPoints), systemImage: "circle.grid.3x3.fill")
-            if let raw = metrics.lidarRawPoints {
-                detailRow("Raw points", formatCount(raw), systemImage: "circle.grid.cross")
+            if let scenePoints = metrics.scenePoints {
+                detailRow("Scene points", formatCount(scenePoints), systemImage: "ruler")
             }
-            if let removed = metrics.lidarRemovedPoints {
-                detailRow("Filtered points", formatCount(removed), systemImage: "line.3.horizontal.decrease")
-            }
-            detailRow("VGGT points", formatCount(metrics.vggtPoints), systemImage: "sparkles")
             detailRow("Mesh vertices", formatCount(metrics.meshVertices), systemImage: "point.3.connected.trianglepath.dotted")
             detailRow("Mesh faces", formatCount(metrics.meshFaces), systemImage: "triangleshape.fill")
         }
@@ -160,11 +153,8 @@ private struct ResultDetailsView: View {
 
     private func scaleSection(_ metrics: BackendMetrics) -> some View {
         resultSection("Scale", systemImage: "ruler") {
-            if let extent = metrics.objectExtentM ?? metrics.lidarExtentM {
+            if let extent = metrics.objectExtentM ?? metrics.sceneExtentM {
                 detailRow("Size", formatExtent(extent), systemImage: "arrow.up.left.and.arrow.down.right")
-            }
-            if let cameraPath = metrics.cameraPathM {
-                detailRow("Camera path", formatMeters(cameraPath), systemImage: "point.topleft.down.curvedto.point.bottomright.up")
             }
             if let rmse = metrics.alignmentRmseM {
                 detailRow("Alignment ICP", "\(formatMillimeters(rmse)) mm", systemImage: "target")

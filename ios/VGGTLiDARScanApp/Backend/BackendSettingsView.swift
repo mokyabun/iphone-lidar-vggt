@@ -25,19 +25,22 @@ struct BackendSettingsView: View {
                     .disabled(scanner.isCheckingBackend)
                 }
 
-                Section("Pipelines") {
-                    ForEach(ScanPipeline.allCases) { pipeline in
-                        let pipelineCapability = scanner.capability(for: pipeline)
-                        HStack {
-                            Label(pipeline.title, systemImage: pipeline.systemImage)
-                            Spacer()
-                            Label(
-                                pipelineCapability.state.title,
-                                systemImage: pipelineCapability.state.systemImage
-                            )
+                Section("Pipeline") {
+                    let pipelineCapability = scanner.pipelineCapability
+                    HStack {
+                        Label(ScanPipeline.reconviagen.title, systemImage: ScanPipeline.reconviagen.systemImage)
+                        Spacer()
+                        Label(
+                            pipelineCapability.state.title,
+                            systemImage: pipelineCapability.state.systemImage
+                        )
+                        .font(.footnote)
+                        .foregroundStyle(pipelineCapability.state.color)
+                    }
+                    if let reason = pipelineCapability.reason {
+                        Text(reason)
                             .font(.footnote)
-                            .foregroundStyle(pipelineCapability.state.color)
-                        }
+                            .foregroundStyle(.secondary)
                     }
                 }
             }

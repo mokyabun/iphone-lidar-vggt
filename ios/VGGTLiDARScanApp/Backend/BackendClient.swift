@@ -10,9 +10,9 @@ struct BackendClient {
         return try JSONDecoder.scanBackend.decode(BackendCapabilities.self, from: data)
     }
 
-    func reconstruct(packageURL: URL, options: ReconstructionOptions) async throws -> BackendReconstructionResult {
-        let submission = try await submitJob(packageURL: packageURL, options: options)
-        let status = try await waitForJob(submission.jobID, timeout: options.pipeline.timeout)
+    func reconstruct(packageURL: URL) async throws -> BackendReconstructionResult {
+        let submission = try await submitJob(packageURL: packageURL)
+        let status = try await waitForJob(submission.jobID, timeout: ScanPipeline.reconviagen.timeout)
         let outputURL = try await downloadAsset(jobID: submission.jobID, kind: .result)
         return BackendReconstructionResult(
             outputURL: outputURL,
@@ -21,15 +21,8 @@ struct BackendClient {
         )
     }
 
-    private func submitJob(packageURL: URL, options: ReconstructionOptions) async throws -> BackendJobSubmission {
+    private func submitJob(packageURL: URL) async throws -> BackendJobSubmission {
         var components = URLComponents(url: baseURL.appendingPathComponent("jobs"), resolvingAgainstBaseURL: false)
-        components?.queryItems = [
-            URLQueryItem(name: "run_vggt", value: options.pipeline == .vggt ? "true" : "false"),
-            URLQueryItem(name: "preserve_color", value: options.preserveColor ? "true" : "false"),
-            URLQueryItem(name: "extract_object", value: options.effectiveObject ? "true" : "false"),
-            URLQueryItem(name: "reconstruct_mesh", value: options.effectiveMesh ? "true" : "false"),
-            URLQueryItem(name: "ai_mesh", value: options.pipeline == .aiMesh ? "true" : "false")
-        ]
         guard let url = components?.url else {
             throw URLError(.badURL)
         }

@@ -174,11 +174,16 @@ final class ScanSessionManager: NSObject, ObservableObject {
         }
     }
 
-    func capability(for pipeline: ScanPipeline) -> PipelineCapability {
-        backendCapabilities?.capability(for: pipeline) ?? .unavailable
+    var pipelineCapability: PipelineCapability {
+        backendCapabilities?.capability ?? .unavailable
     }
 
-    func uploadLatestPackage(backendBaseURL: String, options: ReconstructionOptions) async {
+    func capability(for pipeline: ScanPipeline) -> PipelineCapability {
+        _ = pipeline
+        return pipelineCapability
+    }
+
+    func uploadLatestPackage(backendBaseURL: String) async {
         guard let lastPackageURL else { return }
         guard let baseURL = URL(string: backendBaseURL) else {
             statusText = "Bad backend URL"
@@ -186,7 +191,7 @@ final class ScanSessionManager: NSObject, ObservableObject {
         }
 
         isUploading = true
-        statusText = "Processing \(options.pipeline.title)"
+        statusText = "Processing"
         lastErrorText = nil
         lastScaleText = nil
         resultURL = nil
@@ -196,18 +201,12 @@ final class ScanSessionManager: NSObject, ObservableObject {
         downloadingAssets = []
         do {
             let client = BackendClient(baseURL: baseURL)
-            let result = try await client.reconstruct(packageURL: lastPackageURL, options: options)
+            let result = try await client.reconstruct(packageURL: lastPackageURL)
             resultURL = result.outputURL
             resultJobID = result.jobID
             resultMetrics = result.metrics
-            if result.metrics?.aiMeshUsed == true {
-                statusText = "AI mesh ready"
-            } else if let metrics = result.metrics, metrics.finalOutputType == "mesh", metrics.meshFaces > 0 {
-                statusText = "Mesh ready"
-            } else if result.metrics?.finalOutputSource == "lidar_metric" {
-                statusText = "Metric points ready"
-            } else if options.pipeline == .vggt, let metrics = result.metrics, metrics.vggtPoints > 0 {
-                statusText = "VGGT ready"
+            if let metrics = result.metrics, metrics.finalOutputType == "mesh", metrics.meshFaces > 0 {
+                statusText = "Metric mesh ready"
             } else {
                 statusText = "Result ready"
             }
@@ -291,7 +290,7 @@ extension ScanSessionManager: ARSessionDelegate {
 
 extension BackendMetrics {
     var scaleSummary: String? {
-        guard let extent = objectExtentM ?? lidarExtentM, extent.count == 3 else { return nil }
+        guard let extent = objectExtentM ?? sceneExtentM, extent.count == 3 else { return nil }
         let size = extent.map { String(format: "%.2f", $0) }.joined(separator: " x ")
         var details = ["Scale \(size) m"]
         if let alignmentRmseM {
@@ -299,9 +298,6 @@ extension BackendMetrics {
         }
         if let printMeshWatertight {
             details.append(printMeshWatertight ? "STL watertight" : "STL repair needed")
-        }
-        if let cameraPathM {
-            details.append("path \(String(format: "%.2f", cameraPathM)) m")
         }
         return details.joined(separator: " · ")
     }
