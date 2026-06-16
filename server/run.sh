@@ -244,8 +244,12 @@ init_defaults() {
   set_default RECONVIAGEN_WORKER_RESTART "1"
   set_default RECONVIAGEN_WORKER_RESTART_DELAY_SECONDS "20"
   set_default RECONVIAGEN_DINO_MODEL "facebook/dinov3-vitl16-pretrain-lvd1689m"
-  set_default RECONVIAGEN_CUMESH_URL "git+https://github.com/JeffreyXiang/CuMesh.git@12289e1062f0603f2f0d0771b02e1395d247f26f"
-  set_default RECONVIAGEN_FLEX_GEMM_URL "git+https://github.com/JeffreyXiang/FlexGEMM.git@6dd94a859c26ee8246888502eada3dd8ad85532e"
+  set_default RECONVIAGEN_CUMESH_REPO_URL "https://github.com/JeffreyXiang/CuMesh.git"
+  set_default RECONVIAGEN_CUMESH_REPO_REF "12289e1062f0603f2f0d0771b02e1395d247f26f"
+  set_default RECONVIAGEN_CUMESH_DIR "${APP_CACHE_ROOT}/CuMesh"
+  set_default RECONVIAGEN_FLEX_GEMM_REPO_URL "https://github.com/JeffreyXiang/FlexGEMM.git"
+  set_default RECONVIAGEN_FLEX_GEMM_REPO_REF "6dd94a859c26ee8246888502eada3dd8ad85532e"
+  set_default RECONVIAGEN_FLEX_GEMM_DIR "${APP_CACHE_ROOT}/FlexGEMM"
   set_default SPCONV_ALGO "native"
   set_default OPENCV_IO_ENABLE_OPENEXR "1"
   set_default PYTORCH_CUDA_ALLOC_CONF "expandable_segments:True"
@@ -319,6 +323,8 @@ prepare_cache_dirs() {
     "${MPLCONFIGDIR}"
     "${U2NET_HOME}"
     "${RECONVIAGEN_REPO_DIR}"
+    "${RECONVIAGEN_CUMESH_DIR}"
+    "${RECONVIAGEN_FLEX_GEMM_DIR}"
     "${RECONVIAGEN_ENV}"
     "${APP_VENV_REAL_DIR}"
     "${UV_CACHE_DIR}"
@@ -596,6 +602,27 @@ sync_reconviagen_repo() {
   fi
 }
 
+sync_git_checkout() {
+  local label="$1"
+  local repo_dir="$2"
+  local repo_url="$3"
+  local repo_ref="$4"
+
+  if [ -d "${repo_dir}/.git" ]; then
+    log "Updating ${label} ${repo_ref}."
+    git_safe_directory "${repo_dir}"
+    git -C "${repo_dir}" remote set-url origin "${repo_url}"
+    git -C "${repo_dir}" fetch origin
+  else
+    log "Cloning ${label} ${repo_ref}."
+    rm -rf "${repo_dir}"
+    git clone "${repo_url}" "${repo_dir}"
+    git_safe_directory "${repo_dir}"
+  fi
+  git -C "${repo_dir}" checkout --force "${repo_ref}"
+  git -C "${repo_dir}" submodule update --init --recursive
+}
+
 reconviagen_revision() {
   git -C "${RECONVIAGEN_REPO_DIR}" rev-parse HEAD
 }
@@ -685,15 +712,25 @@ sync_reconviagen_runtime_environment() {
 
 ensure_reconviagen_runtime_patches() {
   sync_reconviagen_runtime_environment
+  sync_git_checkout \
+    "CuMesh" \
+    "${RECONVIAGEN_CUMESH_DIR}" \
+    "${RECONVIAGEN_CUMESH_REPO_URL}" \
+    "${RECONVIAGEN_CUMESH_REPO_REF}"
+  sync_git_checkout \
+    "FlexGEMM" \
+    "${RECONVIAGEN_FLEX_GEMM_DIR}" \
+    "${RECONVIAGEN_FLEX_GEMM_REPO_URL}" \
+    "${RECONVIAGEN_FLEX_GEMM_REPO_REF}"
 
   ensure_reconviagen_runtime_dependency \
     "import cumesh" \
     "Installing the nested ReconViaGen CuMesh extension." \
-    "${RECONVIAGEN_CUMESH_URL}" --no-build-isolation --no-deps
+    "${RECONVIAGEN_CUMESH_DIR}" --no-build-isolation --no-deps
   ensure_reconviagen_runtime_dependency \
     "import flex_gemm" \
     "Installing the nested ReconViaGen FlexGEMM extension." \
-    "${RECONVIAGEN_FLEX_GEMM_URL}" --no-build-isolation --no-deps
+    "${RECONVIAGEN_FLEX_GEMM_DIR}" --no-build-isolation --no-deps
   ensure_reconviagen_runtime_dependency \
     "import o_voxel" \
     "Installing the nested ReconViaGen o-voxel extension." \
