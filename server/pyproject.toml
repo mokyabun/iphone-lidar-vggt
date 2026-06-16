@@ -2,7 +2,7 @@
 name = "iphone-lidar-vggt"
 version = "0.1.0"
 description = "Workspace for iPhone/iPad LiDAR capture, orchestration, VGGT, and ReconViaGen processing"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.12"
 dependencies = [
   "reconviagen-worker",
   "vggt-orchestration",

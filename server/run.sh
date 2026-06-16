@@ -183,6 +183,8 @@ init_defaults() {
   set_default APP_PREFETCH_RECONVIAGEN "1"
   set_default APP_REFRESH_MODEL_CACHE "0"
   set_default PYTHON_BIN ""
+  set_default APP_PYTHON_VERSION "3.11"
+  set_default RECONVIAGEN_PYTHON_VERSION "3.10"
   set_default APP_VENV_DIR "${APP_DIR}/server/.venv"
   set_default APP_VENV_REAL_DIR "${APP_ENV_ROOT}/iphone-lidar-vggt"
   set_default APP_PYTHON_BIN "${APP_VENV_DIR}/bin/python"
@@ -468,6 +470,14 @@ activate_app_venv() {
 ensure_app_venv() {
   resolve_python_bin
 
+  if [ -x "${APP_PYTHON_BIN}" ] \
+    && ! "${APP_PYTHON_BIN}" -c 'import os, sys; expected = os.environ["APP_PYTHON_VERSION"]; actual = f"{sys.version_info.major}.{sys.version_info.minor}"; raise SystemExit(0 if actual == expected else 1)' >/dev/null 2>&1; then
+    log "Recreating app venv with Python ${APP_PYTHON_VERSION}."
+    rm -rf "${APP_VENV_REAL_DIR}"
+    mkdir -p "${APP_VENV_REAL_DIR}"
+    prepare_persistent_links
+  fi
+
   if is_enabled "${APP_USE_SYSTEM_TORCH}"; then
     if [ -f "${APP_VENV_DIR}/pyvenv.cfg" ] \
       && ! grep -Eq '^include-system-site-packages = true$' "${APP_VENV_DIR}/pyvenv.cfg"; then
@@ -476,9 +486,9 @@ ensure_app_venv() {
       mkdir -p "${APP_VENV_REAL_DIR}"
       prepare_persistent_links
     fi
-    uv venv --python "${PYTHON_BIN}" --system-site-packages --allow-existing "${APP_VENV_DIR}"
+    uv venv --python "${APP_PYTHON_VERSION}" --system-site-packages --allow-existing "${APP_VENV_DIR}"
   else
-    uv venv --python "${PYTHON_BIN}" --allow-existing "${APP_VENV_DIR}"
+    uv venv --python "${APP_PYTHON_VERSION}" --allow-existing "${APP_VENV_DIR}"
   fi
 }
 
@@ -493,7 +503,7 @@ app_sync_stamp() {
   )
   local file
 
-  python_version="$("${PYTHON_BIN}" -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')"
+  python_version="$("${APP_PYTHON_BIN}" -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')"
   {
     printf 'python=%s\n' "${python_version}"
     printf 'uv=%s\n' "$(uv --version 2>/dev/null || true)"
@@ -548,7 +558,7 @@ install_python_packages() {
     return 0
   fi
 
-  UV_PROJECT_ENVIRONMENT="${APP_VENV_DIR}" uv sync "${sync_args[@]}"
+  UV_PROJECT_ENVIRONMENT="${APP_VENV_DIR}" uv sync --python "${APP_PYTHON_VERSION}" "${sync_args[@]}"
   mkdir -p "$(dirname "${stamp_file}")"
   printf '%s\n' "${current_stamp}" > "${stamp_file}"
   activate_app_venv
@@ -669,7 +679,7 @@ sync_reconviagen_runtime_environment() {
   log "Syncing the isolated ReconViaGen runtime environment."
   UV_PROJECT_ENVIRONMENT="${RECONVIAGEN_ENV}" uv sync \
     --project "${APP_DIR}/server/reconviagen-runtime" \
-    --python 3.10
+    --python "${RECONVIAGEN_PYTHON_VERSION}"
   printf '%s\n' "${current_stamp}" > "${stamp_file}"
 }
 
