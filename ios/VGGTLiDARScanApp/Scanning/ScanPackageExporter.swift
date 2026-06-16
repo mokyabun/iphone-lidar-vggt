@@ -84,6 +84,27 @@ final class ScanPackageExporter: @unchecked Sendable {
 
     func finishScan() throws -> URL {
         closeFramesFile()
+        return try zipCurrentPackage()
+    }
+
+    /// Zips the package as it currently stands without closing the active scan,
+    /// so more frames can keep being appended afterwards. Used by manual capture.
+    func packageSnapshot() throws -> URL {
+        try framesFileHandle?.synchronize()
+        return try zipCurrentPackage()
+    }
+
+    /// Discards the active scan and removes its working directory.
+    func cancelScan() {
+        closeFramesFile()
+        if let rootURL {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        rootURL = nil
+        writtenFrameCount = 0
+    }
+
+    private func zipCurrentPackage() throws -> URL {
         guard let rootURL else {
             throw CocoaError(.fileNoSuchFile)
         }

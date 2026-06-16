@@ -31,9 +31,11 @@ def reconstruct_scan(package_path: Path, output_dir: Path) -> ReconstructionResu
         lidar_output = output_dir / "lidar_reference.ply"
         write_point_cloud_ply(lidar_output, object_points, object_colors)
         input_dir = output_dir / "reconviagen_input"
-        input_views = _prepare_reconviagen_input(root, selected, masks, object_points, input_dir)
+        input_views, mask_warning = _prepare_reconviagen_input(root, selected, masks, object_points, input_dir)
         if not input_views:
-            raise RuntimeError("No usable masked views were available for ReconViaGen.")
+            raise RuntimeError("No usable views were available for ReconViaGen.")
+        if mask_warning:
+            warnings.append(mask_warning)
 
         raw_mesh = output_dir / "reconviagen_raw.glb"
         final_ply = output_dir / "reconviagen_metric.ply"
@@ -151,7 +153,7 @@ def _prepare_reconviagen_input(
     masks: dict[str, np.ndarray],
     object_points: np.ndarray,
     input_dir: Path,
-) -> list[Path]:
+) -> tuple[list[Path], str | None]:
     input_dir.mkdir(parents=True, exist_ok=True)
     object_center = np.median(object_points, axis=0)
     candidates: list[dict[str, object]] = []
@@ -175,8 +177,19 @@ def _prepare_reconviagen_input(
         center_score = max(0.0, 1.0 - float(np.linalg.norm(center - 0.5)))
         quality = bbox_area * (0.5 + center_score)
         candidates.append({"frame": frame, "image": image, "mask": mask, "direction": direction, "quality": quality})
+
+    mask_warning: str | None = None
     if not candidates:
-        return []
+        # Mask filtering found no usable views — fall back to full-image (no mask).
+        candidates = _unmasked_candidates(root, frames, object_center)
+        if not candidates:
+            return [], None
+        mask_warning = (
+            "Object mask detection found no usable views. "
+            "Falling back to full-image reconstruction (no foreground masking). "
+            "Results may include background geometry."
+        )
+
     selected = _select_diverse_views(candidates, settings().reconviagen_max_images)
     selected = _order_views(selected)
     output_paths: list[Path] = []
@@ -187,7 +200,27 @@ def _prepare_reconviagen_input(
         Image.fromarray(rgba).resize((size, size), Image.Resampling.LANCZOS).save(output)
         output_paths.append(output)
     write_json(input_dir / "manifest.json", {"view_count": len(output_paths), "frame_ids": [candidate["frame"].frame_id for candidate in selected]})
-    return output_paths
+    return output_paths, mask_warning
+
+
+def _unmasked_candidates(
+    root: Path,
+    frames: list[FrameRecord],
+    object_center: np.ndarray,
+) -> list[dict[str, object]]:
+    candidates: list[dict[str, object]] = []
+    for frame in frames:
+        image = np.asarray(read_image(root, frame), dtype=np.uint8)
+        full_mask = np.ones((image.shape[0], image.shape[1]), dtype=bool)
+        camera_center = np.asarray(frame.camera_to_world, dtype=np.float64)[:3, 3]
+        direction = camera_center - object_center
+        norm = float(np.linalg.norm(direction))
+        if norm < 1e-6:
+            continue
+        direction /= norm
+        quality = float(image.shape[0] * image.shape[1])
+        candidates.append({"frame": frame, "image": image, "mask": full_mask, "direction": direction, "quality": quality})
+    return candidates
 
 
 def _select_diverse_views(candidates: list[dict[str, object]], maximum: int) -> list[dict[str, object]]:

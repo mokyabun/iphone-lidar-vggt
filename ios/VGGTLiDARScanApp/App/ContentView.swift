@@ -73,8 +73,10 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
+            modePicker
+
             HStack(spacing: 10) {
-                captureButton
+                captureControls
 
                 if let packageURL = scanner.lastPackageURL {
                     Button {
@@ -121,8 +123,31 @@ struct ContentView: View {
         .background(.ultraThinMaterial)
     }
 
+    private var modePicker: some View {
+        Picker("Capture mode", selection: Binding(
+            get: { scanner.captureMode },
+            set: { scanner.setMode($0) }
+        )) {
+            ForEach(CaptureMode.allCases) { mode in
+                Text(mode.title).tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
+        .disabled(scanner.isRecording || scanner.isCapturingPhoto || scanner.isUploading)
+    }
+
     @ViewBuilder
-    private var captureButton: some View {
+    private var captureControls: some View {
+        switch scanner.captureMode {
+        case .video:
+            videoButton
+        case .photo:
+            photoButtons
+        }
+    }
+
+    @ViewBuilder
+    private var videoButton: some View {
         Button {
             scanner.isRecording ? scanner.stopScan() : scanner.startScan()
         } label: {
@@ -135,6 +160,33 @@ struct ContentView: View {
         .buttonStyle(.borderedProminent)
         .tint(scanner.isRecording ? .red : .blue)
         .disabled(!scanner.isSupported || scanner.isUploading || scanner.isCapturingPhoto)
+    }
+
+    @ViewBuilder
+    private var photoButtons: some View {
+        Button {
+            scanner.captureSinglePhoto()
+        } label: {
+            if scanner.isCapturingPhoto {
+                ProgressView()
+                    .frame(maxWidth: .infinity, minHeight: 28)
+            } else {
+                Label("Capture", systemImage: "camera.fill")
+                    .frame(maxWidth: .infinity, minHeight: 28)
+            }
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(.blue)
+        .disabled(!scanner.isSupported || scanner.isUploading || scanner.isCapturingPhoto)
+
+        Button(role: .destructive) {
+            scanner.resetPhotos()
+        } label: {
+            Label("Reset", systemImage: "arrow.counterclockwise")
+                .frame(maxWidth: .infinity, minHeight: 28)
+        }
+        .buttonStyle(.bordered)
+        .disabled(scanner.capturedFrameCount == 0 || scanner.isCapturingPhoto || scanner.isUploading)
     }
 
     private var statusSystemImage: String {
@@ -175,20 +227,6 @@ struct ContentView: View {
 
     private func refreshBackend() async {
         await scanner.refreshCapabilities(backendBaseURL: backendBaseURL)
-    }
-}
-
-private enum CaptureMode: String, CaseIterable, Identifiable {
-    case photo
-    case video
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .photo: return "Photo"
-        case .video: return "Video"
-        }
     }
 }
 

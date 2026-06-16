@@ -2,11 +2,26 @@ import ARKit
 import Foundation
 import SwiftUI
 
+enum CaptureMode: String, CaseIterable, Identifiable {
+    case video
+    case photo
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .video: return "Video"
+        case .photo: return "Photo"
+        }
+    }
+}
+
 @MainActor
 final class ScanSessionManager: NSObject, ObservableObject {
     let session = ARSession()
 
     @Published private(set) var isSupported = false
+    @Published var captureMode: CaptureMode = .video
     @Published private(set) var isRecording = false
     @Published private(set) var isCapturingPhoto = false
     @Published private(set) var capturedFrameCount = 0
@@ -28,6 +43,7 @@ final class ScanSessionManager: NSObject, ObservableObject {
     private var lastCaptureTimestamp: TimeInterval = 0
     private let captureInterval: TimeInterval = 0.35
     private var latestFrame: ARFrame?
+    private var photoSessionActive = false
 
     override init() {
         super.init()
@@ -78,7 +94,22 @@ final class ScanSessionManager: NSObject, ObservableObject {
         }
     }
 
-    func capturePhoto() {
+    func setMode(_ mode: CaptureMode) {
+        guard mode != captureMode else { return }
+        guard !isRecording, !isCapturingPhoto, !isUploading else { return }
+        if photoSessionActive {
+            exporter.cancelScan()
+            photoSessionActive = false
+        }
+        capturedFrameCount = 0
+        resetOutputState()
+        captureMode = mode
+        statusText = isSupported ? "Ready" : statusText
+    }
+
+    /// Manual capture: appends one frame each press, accumulating into a single
+    /// package. The scan stays open between captures; `resetPhotos` discards it.
+    func captureSinglePhoto() {
         guard isSupported, !isRecording, !isCapturingPhoto else { return }
         guard let frame = latestFrame else {
             statusText = "Camera warming up"
@@ -87,9 +118,12 @@ final class ScanSessionManager: NSObject, ObservableObject {
         }
 
         do {
-            try exporter.beginScan(lidarSupported: isSupported)
-            capturedFrameCount = 0
-            resetOutputState()
+            if !photoSessionActive {
+                try exporter.beginScan(lidarSupported: isSupported)
+                capturedFrameCount = 0
+                resetOutputState()
+                photoSessionActive = true
+            }
             isCapturingPhoto = true
             statusText = "Capturing photo"
         } catch {
@@ -98,27 +132,38 @@ final class ScanSessionManager: NSObject, ObservableObject {
             return
         }
 
+        let nextIndex = capturedFrameCount + 1
         let exporter = exporter
         captureQueue.async { [weak self, exporter] in
-            guard let self else { return }
             do {
-                try exporter.append(frame: frame, index: 1)
-                let url = try exporter.finishScan()
+                try exporter.append(frame: frame, index: nextIndex)
+                let url = try exporter.packageSnapshot()
                 DispatchQueue.main.async {
-                    self.capturedFrameCount = 1
-                    self.lastPackageURL = url
-                    self.isCapturingPhoto = false
-                    self.statusText = "Photo ready"
-                    self.lastErrorText = nil
+                    self?.capturedFrameCount = nextIndex
+                    self?.lastPackageURL = url
+                    self?.isCapturingPhoto = false
+                    self?.statusText = "Captured \(nextIndex)"
+                    self?.lastErrorText = nil
                 }
             } catch {
                 DispatchQueue.main.async {
-                    self.isCapturingPhoto = false
-                    self.statusText = "Capture failed"
-                    self.lastErrorText = error.localizedDescription
+                    self?.isCapturingPhoto = false
+                    self?.statusText = "Capture failed"
+                    self?.lastErrorText = error.localizedDescription
                 }
             }
         }
+    }
+
+    func resetPhotos() {
+        guard !isCapturingPhoto, !isUploading else { return }
+        if photoSessionActive {
+            exporter.cancelScan()
+            photoSessionActive = false
+        }
+        capturedFrameCount = 0
+        resetOutputState()
+        statusText = isSupported ? "Ready" : statusText
     }
 
     func stopScan() {
