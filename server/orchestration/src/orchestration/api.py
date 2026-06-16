@@ -1,0 +1,353 @@
+from __future__ import annotations
+
+import importlib.util
+import json
+import shutil
+import threading
+import time
+import urllib.error
+import urllib.request
+import uuid
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import AsyncIterator
+
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
+
+from .reconstruct import reconstruct_scan
+from .settings import api_settings
+
+RUN_ROOT = Path("runs/api")
+_RECONSTRUCTION_LOCK = threading.Lock()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    if api_settings().vggt_preload:
+        thread = threading.Thread(
+            target=_preload_vggt_background, name="vggt-preload", daemon=True
+        )
+        thread.start()
+    yield
+
+
+app = FastAPI(title="VGGT iPhone LiDAR Scanner API", lifespan=lifespan)
+
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.get("/capabilities")
+def capabilities() -> dict[str, object]:
+    settings = api_settings()
+    vggt_available = (
+        bool(settings.vggt_runner)
+        or importlib.util.find_spec("vggt") is not None
+    )
+    ai_state, ai_reason = _reconviagen_state()
+    return {
+        "pipelines": {
+            "metric": {
+                "state": "available",
+                "options": ["color", "object", "mesh"],
+            },
+            "vggt": {
+                "state": "available" if vggt_available else "unavailable",
+                "reason": None if vggt_available else "VGGT runtime is not installed.",
+                "options": ["color", "object"],
+            },
+            "ai_mesh": {
+                "state": ai_state,
+                "reason": ai_reason,
+                "options": ["color", "object", "mesh", "preview_glb", "print_stl"],
+                "required_options": ["object", "mesh"],
+            },
+        }
+    }
+
+
+@app.post("/jobs", status_code=202)
+def create_job(
+    scan_package: UploadFile = File(...),
+    run_vggt: bool = False,
+    preserve_color: bool = True,
+    extract_object: bool = False,
+    reconstruct_mesh: bool = False,
+    ai_mesh: bool = False,
+) -> dict[str, object]:
+    job_id = uuid.uuid4().hex
+    job_dir = RUN_ROOT / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    package_path = job_dir / "ScanPackage.zip"
+
+    with package_path.open("wb") as handle:
+        shutil.copyfileobj(scan_package.file, handle)
+
+    _write_job_status(job_dir, "queued")
+    _launch_job(
+        package_path=package_path,
+        output_dir=job_dir / "output",
+        error_path=job_dir / "error.txt",
+        run_vggt=run_vggt,
+        preserve_color=preserve_color,
+        extract_object=extract_object,
+        reconstruct_mesh=reconstruct_mesh,
+        ai_mesh=ai_mesh,
+    )
+
+    return {"job_id": job_id, "status": "queued"}
+
+
+@app.post("/reconstruct")
+def reconstruct_now(
+    scan_package: UploadFile = File(...),
+    run_vggt: bool = False,
+    preserve_color: bool = True,
+    extract_object: bool = False,
+    reconstruct_mesh: bool = False,
+    ai_mesh: bool = False,
+) -> FileResponse:
+    job_id = uuid.uuid4().hex
+    job_dir = RUN_ROOT / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    package_path = job_dir / "ScanPackage.zip"
+
+    with package_path.open("wb") as handle:
+        shutil.copyfileobj(scan_package.file, handle)
+
+    metrics = _run_reconstruction(
+        package_path,
+        job_dir / "output",
+        job_dir / "error.txt",
+        run_vggt=run_vggt,
+        preserve_color=preserve_color,
+        extract_object=extract_object,
+        reconstruct_mesh=reconstruct_mesh,
+        ai_mesh=ai_mesh,
+    )
+
+    result_path = Path(metrics.final_output)
+    return FileResponse(
+        result_path,
+        filename="scan_final.ply",
+        media_type="application/octet-stream",
+        headers={
+            "X-Job-ID": job_id,
+            "X-Reconstruction-Metrics": json.dumps(metrics.model_dump()),
+        },
+    )
+
+
+@app.get("/jobs/{job_id}")
+def get_job(job_id: str) -> dict[str, object]:
+    job_dir = RUN_ROOT / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail="Job not found")
+    metrics_path = job_dir / "output" / "metrics.json"
+    if metrics_path.exists():
+        return {
+            "job_id": job_id,
+            "status": "complete",
+            "metrics": json.loads(metrics_path.read_text()),
+        }
+    error_path = job_dir / "error.txt"
+    if error_path.exists():
+        return {"job_id": job_id, "status": "failed", "error": error_path.read_text()}
+    status_path = job_dir / "status.json"
+    if status_path.exists():
+        return {"job_id": job_id, **json.loads(status_path.read_text())}
+    return {"job_id": job_id, "status": "queued"}
+
+
+@app.get("/jobs/{job_id}/result")
+def get_result(job_id: str) -> FileResponse:
+    result = RUN_ROOT / job_id / "output" / "scan_final.ply"
+    if not result.exists():
+        raise HTTPException(status_code=404, detail="Result not found")
+    return FileResponse(result, filename="scan_final.ply")
+
+
+@app.get("/jobs/{job_id}/preview")
+def get_preview_asset(job_id: str) -> FileResponse:
+    result = RUN_ROOT / job_id / "output" / "scan_object_preview.glb"
+    if not result.exists():
+        raise HTTPException(status_code=404, detail="Preview GLB not found")
+    return FileResponse(
+        result, filename="scan_object_preview.glb", media_type="model/gltf-binary"
+    )
+
+
+@app.get("/jobs/{job_id}/print")
+def get_print_asset(job_id: str) -> FileResponse:
+    result = RUN_ROOT / job_id / "output" / "scan_object_print.stl"
+    if not result.exists():
+        raise HTTPException(status_code=404, detail="Print STL not found")
+    return FileResponse(
+        result, filename="scan_object_print.stl", media_type="model/stl"
+    )
+
+
+def _reconviagen_state() -> tuple[str, str | None]:
+    settings = api_settings()
+    error_path = settings.reconviagen_worker_error
+    worker_url = settings.reconviagen_worker_url
+    if worker_url:
+        try:
+            with urllib.request.urlopen(
+                worker_url.rstrip("/") + "/health", timeout=1
+            ) as response:
+                if response.status == 200:
+                    return "available", None
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            pass
+    if error_path.exists():
+        message = error_path.read_text().strip()
+        return "unavailable", message or "ReconViaGen worker failed to start."
+    if not worker_url:
+        return "unavailable", "ReconViaGen worker is not configured."
+    return "loading", "ReconViaGen worker is loading."
+
+
+def _run_reconstruction(
+    package_path: Path,
+    output_dir: Path,
+    error_path: Path,
+    *,
+    run_vggt: bool,
+    preserve_color: bool,
+    extract_object: bool,
+    reconstruct_mesh: bool,
+    ai_mesh: bool,
+):
+    if not _RECONSTRUCTION_LOCK.acquire(blocking=False):
+        raise HTTPException(
+            status_code=409,
+            detail="Another reconstruction is already running. Wait for it to finish and retry.",
+        )
+
+    try:
+        return _perform_reconstruction(
+            package_path,
+            output_dir,
+            error_path,
+            run_vggt=run_vggt,
+            preserve_color=preserve_color,
+            extract_object=extract_object,
+            reconstruct_mesh=reconstruct_mesh,
+            ai_mesh=ai_mesh,
+        )
+    finally:
+        _RECONSTRUCTION_LOCK.release()
+
+
+def _perform_reconstruction(
+    package_path: Path,
+    output_dir: Path,
+    error_path: Path,
+    *,
+    run_vggt: bool,
+    preserve_color: bool,
+    extract_object: bool,
+    reconstruct_mesh: bool,
+    ai_mesh: bool,
+):
+    started = time.monotonic()
+    print(
+        f"[api] reconstruction start package={package_path} "
+        f"vggt={run_vggt} color={preserve_color} object={extract_object} "
+        f"mesh={reconstruct_mesh} ai_mesh={ai_mesh}",
+        flush=True,
+    )
+    try:
+        metrics = reconstruct_scan(
+            package_path,
+            output_dir,
+            run_vggt_stage=run_vggt,
+            preserve_color=preserve_color,
+            extract_object=extract_object,
+            reconstruct_mesh=reconstruct_mesh,
+            ai_mesh=ai_mesh,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 - direct demo endpoint should return a clear API error.
+        error_path.write_text(str(exc))
+        print(
+            f"[api] reconstruction failed after {time.monotonic() - started:.1f}s: {exc}",
+            flush=True,
+        )
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    print(
+        f"[api] reconstruction complete after {time.monotonic() - started:.1f}s "
+        f"output={metrics.final_output_type} mesh_faces={metrics.mesh_faces} vggt_points={metrics.vggt_points}",
+        flush=True,
+    )
+    return metrics
+
+
+def _launch_job(**kwargs: object) -> None:
+    thread = threading.Thread(
+        target=_run_job_background,
+        kwargs=kwargs,
+        name=f"reconstruction-{Path(kwargs['output_dir']).parent.name}",
+        daemon=True,
+    )
+    thread.start()
+
+
+def _run_job_background(
+    package_path: Path,
+    output_dir: Path,
+    error_path: Path,
+    *,
+    run_vggt: bool,
+    preserve_color: bool,
+    extract_object: bool,
+    reconstruct_mesh: bool,
+    ai_mesh: bool,
+) -> None:
+    job_dir = output_dir.parent
+    with _RECONSTRUCTION_LOCK:
+        _write_job_status(job_dir, "processing")
+        try:
+            _perform_reconstruction(
+                package_path,
+                output_dir,
+                error_path,
+                run_vggt=run_vggt,
+                preserve_color=preserve_color,
+                extract_object=extract_object,
+                reconstruct_mesh=reconstruct_mesh,
+                ai_mesh=ai_mesh,
+            )
+        except Exception as exc:  # noqa: BLE001 - persist the failure for polling clients.
+            if not error_path.exists():
+                error_path.write_text(str(exc))
+            _write_job_status(job_dir, "failed")
+            return
+        _write_job_status(job_dir, "complete")
+
+
+def _write_job_status(job_dir: Path, status: str) -> None:
+    path = job_dir / "status.json"
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps({"status": status}))
+    temporary.replace(path)
+
+
+def _preload_vggt_background() -> None:
+    try:
+        print("[startup] VGGT preload started in background", flush=True)
+        print(f"[startup] {preload_vggt()}", flush=True)
+    except Exception as exc:  # noqa: BLE001 - keep API up so LiDAR-only still works.
+        print(f"[startup] VGGT preload failed: {exc}", flush=True)
+
+
+def preload_vggt() -> str:
+    from vggt_worker.service import preload_vggt as preload
+
+    return preload()

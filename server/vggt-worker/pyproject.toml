@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vggt-worker"
+version = "0.1.0"
+description = "VGGT runtime preparation and point-cloud adapter"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115.0",
+  "numpy>=1.26.0,<2",
+  "pillow>=10.0.0",
+  "pydantic-settings>=2.6.0",
+  "uvicorn>=0.30.0",
+  "vggt-orchestration",
+]
+
+[project.optional-dependencies]
+vggt = [
+  "einops>=0.8.0",
+  "huggingface-hub>=0.24.0",
+  "opencv-python>=4.10.0",
+  "safetensors>=0.4.0",
+  "torch>=2.4.0",
+  "torchvision>=0.19.0",
+]
+
+[project.scripts]
+vggt-prepare = "vggt_worker.manager:main"
+vggt-worker = "vggt_worker.main:main"
+
+[tool.uv]
+package = true
+
+[tool.uv.sources]
+vggt-orchestration = { workspace = true }
+
+[tool.setuptools.packages.find]
+where = ["src"]

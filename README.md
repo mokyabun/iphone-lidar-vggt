@@ -9,13 +9,19 @@ The project is split around one stable contract: a `ScanPackage.zip` containing 
 ```text
 ios/
   VGGTLiDARScanApp.xcodeproj/     Minimal Xcode project
-  VGGTLiDARScanApp/               SwiftUI + ARKit capture app
+  VGGTLiDARScanApp/
+    App/                          SwiftUI app entry and root view
+    Backend/                      API models, client, settings, pipeline UI
+    Preview/                      PLY parsing and preview screens
+    Scanning/                     ARKit capture and scan package export
 
-backend/
-  vggt_lidar_scan/                Python package, CLI, FastAPI backend
-  tests/                          Unit tests for package IO and geometry helpers
-
-pyproject.toml                    Python dependency/test configuration
+server/
+  orchestration/                  uv project for FastAPI, CLI, LiDAR reconstruction, shared scan code
+  reconviagen-worker/             uv project for ReconViaGen client, service, and worker entrypoint
+  vggt-worker/                    uv project for VGGT service, worker entrypoint, and preparation
+  pyproject.toml                  uv workspace and test configuration
+  run.sh                          RunPod/bootstrap entrypoint
+  uv.lock                         uv workspace lockfile
 ```
 
 ## MVP Pipeline
@@ -25,12 +31,14 @@ pyproject.toml                    Python dependency/test configuration
 3. Run the LiDAR baseline:
 
 ```bash
+cd server
 uv run scan-reconstruct path/to/ScanPackage.zip --output runs/demo
 ```
 
 4. Optional VGGT stage on a GPU host:
 
 ```bash
+cd server
 uv run scan-reconstruct path/to/ScanPackage.zip --output runs/demo --run-vggt
 ```
 
@@ -72,7 +80,32 @@ Frame records include RGB/depth dimensions, scaled intrinsics for the depth map,
 Start the API:
 
 ```bash
-uv run uvicorn vggt_lidar_scan.api:app --reload
+cd server
+uv run uvicorn orchestration.api:app --reload
+```
+
+For local macOS development, install only the light server and test stack:
+
+```bash
+cd server
+uv sync --extra dev
+uv run --extra dev pytest
+```
+
+Heavy runtime stacks are opt-in:
+
+```bash
+uv sync --extra dev --extra dev-mesh
+uv sync --extra reconstruction
+uv sync --extra vggt
+uv sync --extra segmentation
+```
+
+The worker apps also use FastAPI:
+
+```bash
+uv run reconviagen-worker --host 127.0.0.1 --port 8011
+uv run vggt-worker --host 127.0.0.1 --port 8012
 ```
 
 Endpoints:
@@ -101,7 +134,8 @@ Results include:
 For the app demo, run the backend on a machine reachable from the iPad:
 
 ```bash
-uv run uvicorn vggt_lidar_scan.api:app --host 0.0.0.0 --port 8000
+cd server
+uv run uvicorn orchestration.api:app --host 0.0.0.0 --port 8000
 ```
 
 In the app, set the backend URL to the host IP, for example
@@ -121,6 +155,7 @@ The first target is medium-size object and furniture scanning, not CAD-grade mea
 The backend can prepare VGGT automatically:
 
 ```bash
+cd server
 uv run --extra vggt vggt-prepare
 ```
 
@@ -144,10 +179,10 @@ Recommended RunPod template values:
 - Container start command:
 
 ```bash
-bash -lc 'curl -fsSL https://raw.githubusercontent.com/mokyabun/iphone-lidar-vggt/main/run.sh | bash'
+bash -lc 'curl -fsSL https://raw.githubusercontent.com/mokyabun/iphone-lidar-vggt/main/server/run.sh | bash'
 ```
 
-`run.sh` automatically installs the small system dependencies, clones or updates this repository under `/workspace/iphone-lidar-vggt`, installs the Python package, and starts FastAPI on `0.0.0.0:8000`.
+`server/run.sh` automatically installs the small system dependencies, clones or updates this repository under `/workspace/iphone-lidar-vggt`, installs the Python server workspace, and starts FastAPI on `0.0.0.0:8000`.
 
 RunPod's persistent network volume is mounted at `/workspace`. The bootstrap
 keeps the replaceable Git checkout in `/workspace/iphone-lidar-vggt` and stores
@@ -166,28 +201,37 @@ these model and environment directories remain intact across Pod replacement.
 Set `APP_PERSIST_ROOT` only when the persistent volume is mounted somewhere
 other than `/workspace`.
 
-Useful overrides:
+The committed `server/.env` contains non-secret defaults for reconstruction,
+VGGT, and ReconViaGen. Keep secrets out of that file. In RunPod, put only
+bootstrap values and secrets in the template or Pod environment:
 
 ```bash
 APP_REPO_URL=https://github.com/mokyabun/iphone-lidar-vggt.git
 APP_REPO_REF=main
 APP_DIR=/workspace/iphone-lidar-vggt
-APP_UPDATE_MODE=reset
-APP_PREPARE_VGGT=0
-APP_PREFETCH_VGGT=0
-APP_INSTALL_EXTRAS=reconstruction,vggt,segmentation
-APP_PREPARE_RECONVIAGEN=1
-APP_PREFETCH_RECONVIAGEN=1
-RECONVIAGEN_PRELOAD=1
 HF_TOKEN=hf_your_read_token
-VGGT_MAX_IMAGES=12
-VGGT_PRELOAD=0
-SCAN_MAX_FRAMES=24
-SCAN_RUN_TSDF=0
-MESH_METHOD=object_tsdf
-OBJECT_MASK_BACKEND=sam3_depth
-OBJECT_SAM_MODEL=sam3.pt
 ```
+
+When using the curl bootstrap command, `APP_REPO_URL`, `APP_REPO_REF`, `APP_DIR`,
+and `APP_PERSIST_ROOT` must stay in the RunPod template because `server/.env`
+does not exist until after the repository has been cloned.
+
+After SSHing into a running Pod, use the management helper for live, non-secret
+overrides. It writes `server/.env.local`, which is intentionally ignored by Git
+so `APP_UPDATE_MODE=reset` does not erase your live tweaks.
+
+```bash
+cd /workspace/iphone-lidar-vggt
+server/manage.sh status
+server/manage.sh set VGGT_MAX_IMAGES 8
+server/manage.sh set OBJECT_MASK_BACKEND depth
+server/manage.sh restart
+server/manage.sh logs app
+server/manage.sh logs worker
+```
+
+`server/manage.sh set` refuses secret-looking keys such as `HF_TOKEN`. Put those
+in RunPod environment variables and restart the Pod if they change.
 
 `APP_PREPARE_VGGT=1` clones `facebookresearch/vggt` and installs it as an editable Python package. `APP_PREFETCH_VGGT=1` also downloads the model checkpoint before serving.
 
@@ -205,7 +249,7 @@ To force the faster depth-only object mask:
 OBJECT_MASK_BACKEND=depth
 ```
 
-For a private fork or different account, set `APP_REPO_URL` in the RunPod template environment variables and keep the start command pointed at that repo's raw `run.sh`.
+For a private fork or different account, set `APP_REPO_URL` in the RunPod template environment variables and keep the start command pointed at that repo's raw `server/run.sh`.
 
 To skip VGGT checkpoint predownload for faster pod startup, set:
 
@@ -233,8 +277,8 @@ The implementation fixes ReconViaGen's official recommended quality settings:
 `adaptive_guidance_weight`, `1024_cascade`, and `ss_source=mesh`. If generation
 fails, the existing printable metric LiDAR mesh remains the final result.
 
-The RunPod bootstrap installs ReconViaGen in a separate Python 3.10,
-PyTorch 2.4, CUDA 12.1 micromamba environment. The first startup downloads
+The RunPod bootstrap installs ReconViaGen in a separate uv-managed Python 3.10,
+PyTorch 2.4, CUDA 12.1 environment. The first startup downloads
 and compiles several CUDA extensions and can take a while. Later starts reuse
 the repository, environment, and model caches. The model worker is loaded once
 in the background and reused by reconstruction requests.
@@ -243,7 +287,7 @@ TRELLIS.2 uses Meta's gated
 [`facebook/dinov3-vitl16-pretrain-lvd1689m`](https://huggingface.co/facebook/dinov3-vitl16-pretrain-lvd1689m)
 checkpoint. Accept the model license with the same Hugging Face account as the
 token, then add `HF_TOKEN` as a RunPod template or Pod environment variable.
-`run.sh` checks this access before starting the worker and reports an immediate,
+`server/run.sh` checks this access before starting the worker and reports an immediate,
 actionable backend error when access is missing.
 
 Use a dedicated fine-grained read token restricted to that gated model when

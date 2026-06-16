@@ -5,6 +5,7 @@ __pycache__/
 *.pyc
 *.egg-info/
 runs/
+server/.env.local
 DerivedData/
 build/
 *.xcuserstate

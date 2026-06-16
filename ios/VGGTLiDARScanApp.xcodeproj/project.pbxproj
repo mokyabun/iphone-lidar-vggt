@@ -23,7 +23,7 @@
 		AA000000000000000000000E /* PipelineSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000001F /* PipelineSelector.swift */; };
 		AA000000000000000000000F /* BackendSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000021 /* BackendSettingsView.swift */; };
 		AA00000000000000000000B0 /* ResultPreviewScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000022 /* ResultPreviewScreen.swift */; };
-		AA00000000000000000000B1 /* BackendModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000023 /* BackendModels.swift */; };
+		AA00000000000000000000D1 /* BackendModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000023 /* BackendModels.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -70,26 +70,58 @@
 		AA0000000000000000000031 /* VGGTLiDARScanApp */ = {
 			isa = PBXGroup;
 			children = (
+				AA00000000000000000000C1 /* App */,
+				AA00000000000000000000C2 /* Scanning */,
+				AA00000000000000000000C3 /* Backend */,
+				AA00000000000000000000C4 /* Preview */,
+			);
+			path = VGGTLiDARScanApp;
+			sourceTree = "<group>";
+		};
+		AA00000000000000000000C1 /* App */ = {
+			isa = PBXGroup;
+			children = (
 				AA0000000000000000000018 /* Info.plist */,
 				AA0000000000000000000011 /* VGGTLiDARScanApp.swift */,
 				AA0000000000000000000012 /* ContentView.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		AA00000000000000000000C2 /* Scanning */ = {
+			isa = PBXGroup;
+			children = (
 				AA0000000000000000000013 /* ARScanView.swift */,
 				AA0000000000000000000014 /* ScanSessionManager.swift */,
 				AA0000000000000000000015 /* ScanPackageExporter.swift */,
 				AA0000000000000000000016 /* ScanModels.swift */,
 				AA0000000000000000000017 /* ZipWriter.swift */,
+			);
+			path = Scanning;
+			sourceTree = "<group>";
+		};
+		AA00000000000000000000C3 /* Backend */ = {
+			isa = PBXGroup;
+			children = (
 				AA0000000000000000000023 /* BackendModels.swift */,
 				AA0000000000000000000019 /* BackendClient.swift */,
-				AA000000000000000000001A /* PointCloudPreview.swift */,
 				AA000000000000000000001F /* PipelineSelector.swift */,
 				AA0000000000000000000021 /* BackendSettingsView.swift */,
+			);
+			path = Backend;
+			sourceTree = "<group>";
+		};
+		AA00000000000000000000C4 /* Preview */ = {
+			isa = PBXGroup;
+			children = (
 				AA0000000000000000000022 /* ResultPreviewScreen.swift */,
+				AA000000000000000000001A /* PointCloudPreview.swift */,
 				AA000000000000000000001E /* ScenePLYView.swift */,
 				AA000000000000000000001B /* PLYModel.swift */,
 				AA000000000000000000001C /* PLYParser.swift */,
 				AA000000000000000000001D /* PLYGeometry.swift */,
 			);
-			path = VGGTLiDARScanApp;
+			path = Preview;
 			sourceTree = "<group>";
 		};
 		AA0000000000000000000032 /* Products */ = {
@@ -184,7 +216,7 @@
 				AA000000000000000000000E /* PipelineSelector.swift in Sources */,
 				AA000000000000000000000F /* BackendSettingsView.swift in Sources */,
 				AA00000000000000000000B0 /* ResultPreviewScreen.swift in Sources */,
-				AA00000000000000000000B1 /* BackendModels.swift in Sources */,
+				AA00000000000000000000D1 /* BackendModels.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -315,7 +347,7 @@
 				DEVELOPMENT_ASSET_PATHS = "";
 				DEVELOPMENT_TEAM = W367DDQU4Q;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = VGGTLiDARScanApp/Info.plist;
+				INFOPLIST_FILE = VGGTLiDARScanApp/App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -340,7 +372,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = W367DDQU4Q;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = VGGTLiDARScanApp/Info.plist;
+				INFOPLIST_FILE = VGGTLiDARScanApp/App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

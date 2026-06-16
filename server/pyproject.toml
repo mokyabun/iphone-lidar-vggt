@@ -1,0 +1,47 @@
+[project]
+name = "iphone-lidar-vggt"
+version = "0.1.0"
+description = "Workspace for iPhone/iPad LiDAR capture, orchestration, VGGT, and ReconViaGen processing"
+requires-python = ">=3.11"
+dependencies = [
+  "reconviagen-worker",
+  "vggt-orchestration",
+  "vggt-worker",
+]
+
+[project.optional-dependencies]
+reconstruction = [
+  "reconviagen-worker[mesh]",
+  "vggt-orchestration[reconstruction]",
+]
+vggt = [
+  "vggt-worker[vggt]",
+]
+segmentation = [
+  "vggt-orchestration[segmentation]",
+]
+dev = [
+  "httpx>=0.27.0",
+  "pytest>=8.0.0",
+]
+dev-mesh = [
+  "reconviagen-worker[mesh]",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = [
+  "orchestration",
+  "reconviagen-worker",
+  "vggt-worker",
+]
+
+[tool.uv.sources]
+reconviagen-worker = { workspace = true }
+vggt-orchestration = { workspace = true }
+vggt-worker = { workspace = true }
+
+[tool.pytest.ini_options]
+testpaths = ["orchestration/tests"]
