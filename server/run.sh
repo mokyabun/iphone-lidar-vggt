@@ -5,6 +5,7 @@ APP_HOST="${APP_HOST:-0.0.0.0}"
 APP_PORT="${APP_PORT:-8000}"
 ENV_NAME="${APP_ENV_NAME:-lidar-reconviagen}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export MAMBA_ROOT_PREFIX="${MAMBA_ROOT_PREFIX:-/workspace/micromamba}"
 
 if ! command -v micromamba >/dev/null 2>&1; then
   echo "[run.sh] micromamba is required. Install it first, then rerun this script." >&2
