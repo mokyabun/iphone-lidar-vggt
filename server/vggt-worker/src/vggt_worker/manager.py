@@ -24,15 +24,16 @@ def configure_huggingface_cache() -> Path:
 
 
 def ensure_vggt_repo(auto_download: bool | None = None) -> Path | None:
-    if importlib.util.find_spec("vggt") is not None:
-        return None
-
     settings = vggt_settings()
     repo_dir = (settings.repo_dir or (settings.cache_root / "vggt")).expanduser()
     if repo_dir.exists():
+        sync_vggt_repo(repo_dir)
         ensure_vggt_package_installed(repo_dir)
         _prepend_python_path(repo_dir)
         return repo_dir
+
+    if importlib.util.find_spec("vggt") is not None:
+        return None
 
     if auto_download is None:
         auto_download = settings.auto_download
@@ -40,11 +41,31 @@ def ensure_vggt_repo(auto_download: bool | None = None) -> Path | None:
         return None
 
     repo_dir.parent.mkdir(parents=True, exist_ok=True)
-    repo_url = settings.repo_url
-    subprocess.run(["git", "clone", "--depth", "1", repo_url, str(repo_dir)], check=True)
+    subprocess.run(
+        ["git", "clone", "--depth", "1", "--branch", settings.repo_ref, settings.repo_url, str(repo_dir)],
+        check=True,
+    )
     ensure_vggt_package_installed(repo_dir)
     _prepend_python_path(repo_dir)
     return repo_dir
+
+
+def sync_vggt_repo(repo_dir: Path) -> None:
+    settings = vggt_settings()
+    if not settings.repo_update or not (repo_dir / ".git").exists():
+        return
+    subprocess.run(["git", "-C", str(repo_dir), "remote", "set-url", "origin", settings.repo_url], check=True)
+    subprocess.run(["git", "-C", str(repo_dir), "fetch", "--depth", "1", "origin", settings.repo_ref], check=True)
+    subprocess.run(["git", "-C", str(repo_dir), "reset", "--hard", "FETCH_HEAD"], check=True)
+
+
+def vggt_repo_revision(repo_dir: Path) -> str:
+    if not (repo_dir / ".git").exists():
+        return "local"
+    return subprocess.check_output(
+        ["git", "-C", str(repo_dir), "rev-parse", "HEAD"],
+        text=True,
+    ).strip()
 
 
 def ensure_vggt_package_installed(repo_dir: Path) -> None:
@@ -52,10 +73,13 @@ def ensure_vggt_package_installed(repo_dir: Path) -> None:
         return
     marker = repo_dir / ".vggt_lidar_installed"
     pyproject = repo_dir / "pyproject.toml"
-    if marker.exists() or not pyproject.exists():
+    revision = vggt_repo_revision(repo_dir)
+    if marker.exists() and marker.read_text().strip() == revision:
+        return
+    if not pyproject.exists():
         return
     subprocess.run([sys.executable, "-m", "pip", "install", "-e", str(repo_dir)], check=True)
-    marker.write_text("installed\n")
+    marker.write_text(f"{revision}\n")
 
 
 def ensure_vggt_weights(model_id: str = DEFAULT_MODEL_ID) -> Path:

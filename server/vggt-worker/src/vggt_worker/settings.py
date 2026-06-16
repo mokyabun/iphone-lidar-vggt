@@ -21,6 +21,8 @@ class VGGTSettings(BaseSettings):
     cache_root: Path = Field(Path.home() / ".cache" / "vggt-lidar", validation_alias="VGGT_CACHE_ROOT")
     repo_dir: Path | None = Field(None, validation_alias="VGGT_REPO_DIR")
     repo_url: str = Field("https://github.com/facebookresearch/vggt.git", validation_alias="VGGT_REPO_URL")
+    repo_ref: str = Field("main", validation_alias="VGGT_REPO_REF")
+    repo_update: bool = Field(True, validation_alias="VGGT_REPO_UPDATE")
     auto_download: bool = Field(True, validation_alias="VGGT_AUTO_DOWNLOAD")
     install_repo: bool = Field(True, validation_alias="VGGT_INSTALL_REPO")
     download_weights: bool = Field(True, validation_alias="VGGT_DOWNLOAD_WEIGHTS")

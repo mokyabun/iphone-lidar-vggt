@@ -40,6 +40,14 @@ command_exists() {
   command -v "$1" >/dev/null 2>&1
 }
 
+path_is_empty() {
+  [ ! -e "$1" ] || [ -z "$(find "$1" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]
+}
+
+stamp_hash() {
+  cksum | awk '{print $1 ":" $2}'
+}
+
 is_original_env_name() {
   case "${ORIGINAL_ENV_NAMES}" in
     *$'\n'"$1"$'\n'*)
@@ -154,10 +162,13 @@ default_reconviagen_prepare() {
 init_defaults() {
   set_default APP_PERSIST_ROOT "/workspace"
   set_default APP_CACHE_ROOT "${APP_PERSIST_ROOT}/cache"
+  set_default APP_STATE_ROOT "${APP_CACHE_ROOT}/state"
+  set_default APP_ENV_ROOT "${APP_CACHE_ROOT}/envs"
   set_default APP_MODEL_ROOT "${APP_CACHE_ROOT}/vggt-lidar"
   set_default APP_REPO_URL "https://github.com/mokyabun/iphone-lidar-vggt.git"
   set_default APP_REPO_REF "main"
   set_default APP_DIR "${APP_PERSIST_ROOT}/iphone-lidar-vggt"
+  set_default APP_RUNS_DIR "${APP_PERSIST_ROOT}/runs"
   set_default APP_HOST "0.0.0.0"
   set_default APP_PORT "8000"
   set_default APP_ENV_FILE "${APP_DIR}/server/.env"
@@ -170,8 +181,10 @@ init_defaults() {
   set_default APP_PREFETCH_VGGT "0"
   set_default APP_PREPARE_RECONVIAGEN "$(default_reconviagen_prepare)"
   set_default APP_PREFETCH_RECONVIAGEN "1"
+  set_default APP_REFRESH_MODEL_CACHE "0"
   set_default PYTHON_BIN ""
   set_default APP_VENV_DIR "${APP_DIR}/server/.venv"
+  set_default APP_VENV_REAL_DIR "${APP_ENV_ROOT}/iphone-lidar-vggt"
   set_default APP_PYTHON_BIN "${APP_VENV_DIR}/bin/python"
   set_default APP_UVICORN_BIN "${APP_VENV_DIR}/bin/uvicorn"
   set_default APP_VGGT_PREPARE_BIN "${APP_VENV_DIR}/bin/vggt-prepare"
@@ -180,7 +193,7 @@ init_defaults() {
   set_default PYTHONUNBUFFERED "1"
   set_default PIP_NO_CACHE_DIR "1"
   set_default UV_CACHE_DIR "${APP_CACHE_ROOT}/uv"
-  set_default UV_LINK_MODE "copy"
+  set_default UV_LINK_MODE "hardlink"
   set_default APP_RUNTIME_DIR "${APP_CACHE_ROOT}/run"
   set_default APP_LOG_FILE "${APP_RUNTIME_DIR}/uvicorn.log"
   set_default APP_MANAGER_PID_FILE "${APP_RUNTIME_DIR}/run-sh.pid"
@@ -208,6 +221,8 @@ init_defaults() {
 
   set_default VGGT_AUTO_DOWNLOAD "1"
   set_default VGGT_CACHE_ROOT "${APP_MODEL_ROOT}"
+  set_default VGGT_REPO_REF "main"
+  set_default VGGT_REPO_UPDATE "1"
   set_default HF_HOME "${APP_MODEL_ROOT}/huggingface"
   set_default HF_HUB_CACHE "${HF_HOME}/hub"
   set_default HF_XET_CACHE "${HF_HOME}/xet"
@@ -283,6 +298,8 @@ install_system_packages() {
 prepare_cache_dirs() {
   local dirs=(
     "${APP_CACHE_ROOT}"
+    "${APP_STATE_ROOT}"
+    "${APP_ENV_ROOT}"
     "${APP_MODEL_ROOT}"
     "${VGGT_CACHE_ROOT}"
     "${HF_HOME}"
@@ -298,8 +315,10 @@ prepare_cache_dirs() {
     "${U2NET_HOME}"
     "${RECONVIAGEN_REPO_DIR}"
     "${RECONVIAGEN_ENV}"
+    "${APP_VENV_REAL_DIR}"
     "${UV_CACHE_DIR}"
     "${APP_RUNTIME_DIR}"
+    "${APP_RUNS_DIR}"
     "${YOLO_CONFIG_DIR}"
     "${YOLO_CONFIG_DIR}/Ultralytics"
     "$(dirname "${ULTRALYTICS_SETTINGS}")"
@@ -315,6 +334,45 @@ prepare_cache_dirs() {
     log "Migrating the legacy Torch cache into persistent storage."
     cp -a /root/.cache/torch/. "${TORCH_HOME}/"
   fi
+}
+
+ensure_persistent_link() {
+  local target="$1"
+  local link="$2"
+  local label="$3"
+  local current backup_dir
+
+  if [ "${target}" = "${link}" ]; then
+    return 0
+  fi
+
+  mkdir -p "${target}" "$(dirname "${link}")"
+  if [ -L "${link}" ]; then
+    current="$(readlink "${link}")"
+    if [ "${current}" = "${target}" ]; then
+      return 0
+    fi
+    rm -f "${link}"
+  elif [ -e "${link}" ]; then
+    if [ -d "${link}" ] && path_is_empty "${target}"; then
+      log "Moving existing ${label} into persistent storage at ${target}."
+      rmdir "${target}" 2>/dev/null || true
+      mv "${link}" "${target}"
+    elif [ -d "${link}" ] && path_is_empty "${link}"; then
+      rmdir "${link}"
+    else
+      backup_dir="${link}.local.$(date +%Y%m%d%H%M%S)"
+      log "Preserving existing ${label} at ${backup_dir} before creating persistent symlink."
+      mv "${link}" "${backup_dir}"
+    fi
+  fi
+
+  ln -s "${target}" "${link}"
+}
+
+prepare_persistent_links() {
+  ensure_persistent_link "${APP_VENV_REAL_DIR}" "${APP_VENV_DIR}" "app virtualenv"
+  ensure_persistent_link "${APP_RUNS_DIR}" "${APP_DIR}/server/runs" "run outputs"
 }
 
 backup_non_git_app_dir() {
@@ -411,12 +469,42 @@ ensure_app_venv() {
     if [ -f "${APP_VENV_DIR}/pyvenv.cfg" ] \
       && ! grep -Eq '^include-system-site-packages = true$' "${APP_VENV_DIR}/pyvenv.cfg"; then
       log "Recreating app venv with system site packages enabled."
-      rm -rf "${APP_VENV_DIR}"
+      rm -rf "${APP_VENV_REAL_DIR}"
+      mkdir -p "${APP_VENV_REAL_DIR}"
+      prepare_persistent_links
     fi
     uv venv --python "${PYTHON_BIN}" --system-site-packages --allow-existing "${APP_VENV_DIR}"
   else
     uv venv --python "${PYTHON_BIN}" --allow-existing "${APP_VENV_DIR}"
   fi
+}
+
+app_sync_stamp() {
+  local python_version
+  local files=(
+    "${APP_DIR}/server/pyproject.toml"
+    "${APP_DIR}/server/uv.lock"
+    "${APP_DIR}/server/orchestration/pyproject.toml"
+    "${APP_DIR}/server/reconviagen-worker/pyproject.toml"
+    "${APP_DIR}/server/vggt-worker/pyproject.toml"
+  )
+  local file
+
+  python_version="$("${PYTHON_BIN}" -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')"
+  {
+    printf 'python=%s\n' "${python_version}"
+    printf 'uv=%s\n' "$(uv --version 2>/dev/null || true)"
+    printf 'extras=%s\n' "${APP_INSTALL_EXTRAS}"
+    printf 'use_system_torch=%s\n' "${APP_USE_SYSTEM_TORCH}"
+    printf 'uv_link_mode=%s\n' "${UV_LINK_MODE}"
+    for file in "${files[@]}"; do
+      if [ -f "${file}" ]; then
+        cksum "${file}"
+      else
+        printf 'missing  %s\n' "${file#${APP_DIR}/}"
+      fi
+    done
+  } | stamp_hash
 }
 
 install_python_packages() {
@@ -426,6 +514,8 @@ install_python_packages() {
 
   cd "${APP_DIR}/server"
   local sync_args=()
+  local stamp_file="${APP_STATE_ROOT}/app-uv-sync.stamp"
+  local current_stamp
   local extra
   IFS=',' read -ra requested_extras <<< "${APP_INSTALL_EXTRAS}"
   for extra in "${requested_extras[@]}"; do
@@ -446,7 +536,18 @@ install_python_packages() {
     sync_args+=("--no-install-package" "torch" "--no-install-package" "torchvision")
   fi
 
+  current_stamp="$(app_sync_stamp)"
+  if [ -x "${APP_UVICORN_BIN}" ] \
+    && [ -f "${stamp_file}" ] \
+    && [ "$(cat "${stamp_file}")" = "${current_stamp}" ]; then
+    log "Python workspace environment is already current."
+    activate_app_venv
+    return 0
+  fi
+
   UV_PROJECT_ENVIRONMENT="${APP_VENV_DIR}" uv sync "${sync_args[@]}"
+  mkdir -p "$(dirname "${stamp_file}")"
+  printf '%s\n' "${current_stamp}" > "${stamp_file}"
   activate_app_venv
 }
 
@@ -527,11 +628,46 @@ ensure_reconviagen_runtime_dependency() {
   fi
 }
 
+reconviagen_runtime_stamp() {
+  local repo_revision="${1:-}"
+  local files=(
+    "${APP_DIR}/server/reconviagen-runtime/pyproject.toml"
+    "${APP_DIR}/server/reconviagen-worker/pyproject.toml"
+    "${APP_DIR}/server/uv.lock"
+  )
+  local file
+
+  {
+    printf 'repo_revision=%s\n' "${repo_revision}"
+    printf 'uv=%s\n' "$(uv --version 2>/dev/null || true)"
+    for file in "${files[@]}"; do
+      if [ -f "${file}" ]; then
+        cksum "${file}"
+      else
+        printf 'missing  %s\n' "${file#${APP_DIR}/}"
+      fi
+    done
+  } | stamp_hash
+}
+
 sync_reconviagen_runtime_environment() {
+  local repo_revision current_stamp stamp_file
+
+  repo_revision="$(reconviagen_revision 2>/dev/null || true)"
+  current_stamp="$(reconviagen_runtime_stamp "${repo_revision}")"
+  stamp_file="${RECONVIAGEN_ENV}/.runtime-sync-stamp"
+  if [ -x "${RECONVIAGEN_PYTHON}" ] \
+    && [ -f "${stamp_file}" ] \
+    && [ "$(cat "${stamp_file}")" = "${current_stamp}" ]; then
+    log "ReconViaGen runtime environment is already synced."
+    return 0
+  fi
+
   log "Syncing the isolated ReconViaGen runtime environment."
   UV_PROJECT_ENVIRONMENT="${RECONVIAGEN_ENV}" uv sync \
     --project "${APP_DIR}/server/reconviagen-runtime" \
     --python 3.10
+  printf '%s\n' "${current_stamp}" > "${stamp_file}"
 }
 
 ensure_reconviagen_runtime_patches() {
@@ -567,13 +703,29 @@ verify_reconviagen_hf_access() {
 }
 
 prefetch_reconviagen_weights() {
+  local stamp_file="${APP_STATE_ROOT}/reconviagen-models-prefetched.stamp"
+  local model_stamp
+
   if ! is_enabled "${APP_PREFETCH_RECONVIAGEN}"; then
+    return 0
+  fi
+
+  model_stamp="$(printf '%s\n%s\n%s\n' \
+    "Stable-X/trellis-vggt-v0-2" \
+    "microsoft/TRELLIS.2-4B" \
+    "${RECONVIAGEN_DINO_MODEL}" | stamp_hash)"
+  if ! is_enabled "${APP_REFRESH_MODEL_CACHE}" \
+    && [ -f "${stamp_file}" ] \
+    && [ "$(cat "${stamp_file}")" = "${model_stamp}" ]; then
+    log "ReconViaGen model cache was already prefetched."
     return 0
   fi
 
   log "Prefetching ReconViaGen, TRELLIS.2, and DINOv3 weights."
   "${RECONVIAGEN_PYTHON}" -c \
     "from huggingface_hub import snapshot_download; snapshot_download('Stable-X/trellis-vggt-v0-2'); snapshot_download('microsoft/TRELLIS.2-4B'); snapshot_download('${RECONVIAGEN_DINO_MODEL}')"
+  mkdir -p "$(dirname "${stamp_file}")"
+  printf '%s\n' "${model_stamp}" > "${stamp_file}"
 }
 
 prepare_reconviagen() {
@@ -715,6 +867,7 @@ start_managed_services() {
     load_env_files
     init_defaults
     prepare_cache_dirs
+    prepare_persistent_links
     configure_ultralytics
     start_reconviagen_worker
     start_uvicorn
@@ -767,6 +920,7 @@ main() {
   load_env_files
   init_defaults
   prepare_cache_dirs
+  prepare_persistent_links
   install_python_packages
   configure_ultralytics
   prepare_vggt

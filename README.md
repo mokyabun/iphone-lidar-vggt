@@ -186,8 +186,16 @@ bash -lc 'curl -fsSL https://raw.githubusercontent.com/mokyabun/iphone-lidar-vgg
 
 RunPod's persistent network volume is mounted at `/workspace`. The bootstrap
 keeps the replaceable Git checkout in `/workspace/iphone-lidar-vggt` and stores
-all large reusable state outside that checkout:
+all large reusable state outside that checkout. On startup it links the
+checkout back to persistent storage, so `APP_UPDATE_MODE=reset` can keep the
+code fresh without deleting the slow parts:
 
+- `/workspace/cache/envs/iphone-lidar-vggt`: real server virtualenv
+- `/workspace/iphone-lidar-vggt/server/.venv`: symlink to the real virtualenv
+- `/workspace/runs`: persistent reconstruction outputs
+- `/workspace/iphone-lidar-vggt/server/runs`: symlink to `/workspace/runs`
+- `/workspace/cache/state`: dependency/model prefetch stamps
+- `/workspace/cache/uv`: uv package cache, hardlinked into the persistent venv
 - `/workspace/cache/vggt-lidar/huggingface`: Hugging Face model snapshots
 - `/workspace/cache/vggt-lidar/torch`: Torch Hub models, including DINOv2
 - `/workspace/cache/vggt-lidar/ultralytics`: SAM weights
@@ -197,7 +205,10 @@ all large reusable state outside that checkout:
 - `/workspace/cache/{torch-extensions,triton,cuda}`: compiled runtime caches
 
 The code checkout is reset to the selected Git revision on each launch, while
-these model and environment directories remain intact across Pod replacement.
+these model, environment, and output directories remain intact across Pod
+replacement. `server/run.sh` skips `uv sync` and model prefetch when its stamps
+match the current lockfile, pyprojects, selected extras, Python, and model IDs;
+changing any of those inputs makes the next startup resync automatically.
 Set `APP_PERSIST_ROOT` only when the persistent volume is mounted somewhere
 other than `/workspace`.
 
@@ -233,7 +244,18 @@ server/manage.sh logs worker
 `server/manage.sh set` refuses secret-looking keys such as `HF_TOKEN`. Put those
 in RunPod environment variables and restart the Pod if they change.
 
+Environment layout knobs:
+
+- `.venv` and `server/runs` are always linked into the mounted volume.
+- Python sync and model prefetch are skipped automatically when stamps are current.
+- `APP_REFRESH_MODEL_CACHE=1` forces the next startup to re-check and refresh model snapshots.
+- `APP_VENV_REAL_DIR=/workspace/cache/envs/iphone-lidar-vggt` changes the real venv location.
+- `APP_RUNS_DIR=/workspace/runs` changes where job outputs persist.
+- `UV_LINK_MODE=hardlink` avoids copying packages from uv's cache when the cache and venv are on the same volume. Set it to `copy` if your volume does not support hardlinks.
+
 `APP_PREPARE_VGGT=1` clones `facebookresearch/vggt` and installs it as an editable Python package. `APP_PREFETCH_VGGT=1` also downloads the model checkpoint before serving.
+Set `VGGT_REPO_REF` to pin a branch, tag, or ref; the cached VGGT checkout is
+reset to that ref on startup when `VGGT_REPO_UPDATE=1`.
 
 Performance knobs:
 
