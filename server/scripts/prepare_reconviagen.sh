@@ -51,11 +51,15 @@ PY
 }
 
 runtime_stamp() {
+  # Tracks inputs that actually affect the CUDA extension build.
+  # reconviagen-environment.yml is intentionally excluded: conda package
+  # additions don't require recompiling nvdiffrast/spconv/kaolin. Major
+  # runtime changes (CUDA version, Python version) are captured by the
+  # environment name (RECONVIAGEN_ENV_NAME) and setup flags instead.
   {
     printf 'repo=%s\n' "$(repo_revision)"
     printf 'flags=%s\n' "${RECONVIAGEN_SETUP_FLAGS}"
     printf 'postprocessors=%s\n' "${RECONVIAGEN_INSTALL_POSTPROCESSORS}"
-    cksum "${SERVER_DIR}/reconviagen-environment.yml"
   } | cksum | awk '{print $1}'
 }
 
@@ -137,6 +141,19 @@ fi
 if [ "$(uname -s)" != "Linux" ]; then
   log "Skipping ReconViaGen CUDA setup on $(uname -s)."
   exit 0
+fi
+
+# Fast path: if the CUDA extension stamp already matches the current inputs
+# (repo hash + flags + postprocessors) and the env exists, skip sync and
+# rebuild entirely. This avoids recompiling nvdiffrast/spconv/kaolin on
+# every server restart when nothing relevant has changed.
+if [ "${RECONVIAGEN_REFRESH}" != "1" ] && env_exists && [ -d "${RECONVIAGEN_REPO_DIR}/.git" ]; then
+  _current_stamp="$(runtime_stamp 2>/dev/null || true)"
+  _installed_stamp="$(setup_stamp 2>/dev/null | xargs cat 2>/dev/null || true)"
+  if [ -n "${_current_stamp}" ] && [ "${_installed_stamp}" = "${_current_stamp}" ]; then
+    log "ReconViaGen setup is already current (stamp matched). Skipping sync and rebuild."
+    exit 0
+  fi
 fi
 
 sync_repo
