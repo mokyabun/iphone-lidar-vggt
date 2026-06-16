@@ -1910,35 +1910,43 @@ version = "0.1.0"
 source = { editable = "reconviagen-worker" }
 dependencies = [
     { name = "fastapi" },
-    { name = "numpy" },
     { name = "pillow" },
+    { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "uvicorn" },
-    { name = "vggt-orchestration" },
 ]
 
 [package.optional-dependencies]
+client = [
+    { name = "numpy" },
+    { name = "vggt-orchestration" },
+]
 mesh = [
+    { name = "numpy" },
     { name = "open3d" },
     { name = "scikit-image" },
     { name = "scipy" },
     { name = "trimesh" },
+    { name = "vggt-orchestration" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115.0" },
-    { name = "numpy", specifier = ">=1.26.0,<2" },
+    { name = "numpy", marker = "extra == 'client'", specifier = ">=1.26.0,<2" },
+    { name = "numpy", marker = "extra == 'mesh'", specifier = ">=1.26.0,<2" },
     { name = "open3d", marker = "extra == 'mesh'", specifier = ">=0.18.0" },
     { name = "pillow", specifier = ">=10.0.0" },
+    { name = "pydantic", specifier = ">=2.7.0" },
     { name = "pydantic-settings", specifier = ">=2.6.0" },
     { name = "scikit-image", marker = "extra == 'mesh'", specifier = ">=0.24.0" },
     { name = "scipy", marker = "extra == 'mesh'", specifier = ">=1.13.0" },
     { name = "trimesh", marker = "extra == 'mesh'", specifier = ">=4.4.1" },
     { name = "uvicorn", specifier = ">=0.30.0" },
-    { name = "vggt-orchestration", editable = "orchestration" },
+    { name = "vggt-orchestration", marker = "extra == 'client'", editable = "orchestration" },
+    { name = "vggt-orchestration", marker = "extra == 'mesh'", editable = "orchestration" },
 ]
-provides-extras = ["mesh"]
+provides-extras = ["client", "mesh"]
 
 [[package]]
 name = "referencing"

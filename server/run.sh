@@ -171,6 +171,11 @@ init_defaults() {
   set_default APP_PREPARE_RECONVIAGEN "$(default_reconviagen_prepare)"
   set_default APP_PREFETCH_RECONVIAGEN "1"
   set_default PYTHON_BIN ""
+  set_default APP_VENV_DIR "${APP_DIR}/server/.venv"
+  set_default APP_PYTHON_BIN "${APP_VENV_DIR}/bin/python"
+  set_default APP_UVICORN_BIN "${APP_VENV_DIR}/bin/uvicorn"
+  set_default APP_VGGT_PREPARE_BIN "${APP_VENV_DIR}/bin/vggt-prepare"
+  set_default APP_USE_SYSTEM_TORCH "1"
 
   set_default PYTHONUNBUFFERED "1"
   set_default PIP_NO_CACHE_DIR "1"
@@ -379,16 +384,48 @@ resolve_python_bin() {
   export PYTHON_BIN
 }
 
-install_python_packages() {
-  log "Installing Python dependencies."
+ensure_uv() {
+  if command_exists uv; then
+    return 0
+  fi
+
+  log "Installing uv."
   resolve_python_bin
-  "${PYTHON_BIN}" -m pip install --upgrade pip uv
+  "${PYTHON_BIN}" -m pip install --upgrade uv
+}
+
+activate_app_venv() {
+  case ":${PATH}:" in
+    *":${APP_VENV_DIR}/bin:"*)
+      ;;
+    *)
+      export PATH="${APP_VENV_DIR}/bin:${PATH}"
+      ;;
+  esac
+}
+
+ensure_app_venv() {
+  resolve_python_bin
+
+  if is_enabled "${APP_USE_SYSTEM_TORCH}"; then
+    if [ -f "${APP_VENV_DIR}/pyvenv.cfg" ] \
+      && ! grep -Eq '^include-system-site-packages = true$' "${APP_VENV_DIR}/pyvenv.cfg"; then
+      log "Recreating app venv with system site packages enabled."
+      rm -rf "${APP_VENV_DIR}"
+    fi
+    uv venv --python "${PYTHON_BIN}" --system-site-packages --allow-existing "${APP_VENV_DIR}"
+  else
+    uv venv --python "${PYTHON_BIN}" --allow-existing "${APP_VENV_DIR}"
+  fi
+}
+
+install_python_packages() {
+  log "Syncing Python workspace dependencies."
+  ensure_uv
+  ensure_app_venv
 
   cd "${APP_DIR}/server"
-  local orchestration_extras=()
-  local vggt_worker_extras=()
-  local reconviagen_extras=()
-  local dev_packages=()
+  local sync_args=()
   local extra
   IFS=',' read -ra requested_extras <<< "${APP_INSTALL_EXTRAS}"
   for extra in "${requested_extras[@]}"; do
@@ -396,18 +433,8 @@ install_python_packages() {
     case "${extra}" in
       "")
         ;;
-      reconstruction)
-        orchestration_extras+=("reconstruction")
-        reconviagen_extras+=("mesh")
-        ;;
-      vggt)
-        vggt_worker_extras+=("vggt")
-        ;;
-      segmentation)
-        orchestration_extras+=("segmentation")
-        ;;
-      dev)
-        dev_packages+=("httpx>=0.27.0" "pytest>=8.0.0")
+      reconstruction | vggt | segmentation | dev | dev-mesh)
+        sync_args+=("--extra" "${extra}")
         ;;
       *)
         die "Unknown APP_INSTALL_EXTRAS entry: ${extra}"
@@ -415,32 +442,16 @@ install_python_packages() {
     esac
   done
 
-  local orchestration_spec="orchestration"
-  local vggt_worker_spec="vggt-worker"
-  local reconviagen_spec="reconviagen-worker"
-  if [ "${#orchestration_extras[@]}" -gt 0 ]; then
-    orchestration_spec="orchestration[$(join_by_comma "${orchestration_extras[@]}")]"
-  fi
-  if [ "${#vggt_worker_extras[@]}" -gt 0 ]; then
-    vggt_worker_spec="vggt-worker[$(join_by_comma "${vggt_worker_extras[@]}")]"
-  fi
-  if [ "${#reconviagen_extras[@]}" -gt 0 ]; then
-    reconviagen_spec="reconviagen-worker[$(join_by_comma "${reconviagen_extras[@]}")]"
+  if is_enabled "${APP_USE_SYSTEM_TORCH}"; then
+    sync_args+=("--no-install-package" "torch" "--no-install-package" "torchvision")
   fi
 
-  uv pip install --system -e "${orchestration_spec}" -e "${vggt_worker_spec}" -e "${reconviagen_spec}"
-  if [ "${#dev_packages[@]}" -gt 0 ]; then
-    uv pip install --system "${dev_packages[@]}"
-  fi
-}
-
-join_by_comma() {
-  local IFS=,
-  printf '%s' "$*"
+  UV_PROJECT_ENVIRONMENT="${APP_VENV_DIR}" uv sync "${sync_args[@]}"
+  activate_app_venv
 }
 
 configure_ultralytics() {
-  "${PYTHON_BIN}" -c \
+  "${APP_PYTHON_BIN}" -c \
     "from ultralytics import settings; settings.update({'weights_dir': '${ULTRALYTICS_WEIGHTS_DIR}', 'runs_dir': '${ULTRALYTICS_RUNS_DIR}'})" \
     >/dev/null 2>&1 || true
 }
@@ -448,7 +459,7 @@ configure_ultralytics() {
 prepare_vggt() {
   if is_enabled "${APP_PREPARE_VGGT}"; then
     log "Preparing VGGT repo and Python package."
-    VGGT_DOWNLOAD_WEIGHTS="${APP_PREFETCH_VGGT}" vggt-prepare
+    VGGT_DOWNLOAD_WEIGHTS="${APP_PREFETCH_VGGT}" "${APP_VGGT_PREPARE_BIN}"
   elif is_enabled "${APP_PREFETCH_VGGT}"; then
     die "APP_PREFETCH_VGGT=1 requires APP_PREPARE_VGGT=1."
   else
@@ -486,20 +497,7 @@ create_reconviagen_env() {
 
   log "Creating the isolated ReconViaGen uv environment."
   rm -rf "${RECONVIAGEN_ENV}"
-  uv venv --python 3.10 --seed "${RECONVIAGEN_ENV}"
-  uv pip install --python "${RECONVIAGEN_PYTHON}" \
-    --index-url https://download.pytorch.org/whl/cu121 \
-    torch==2.4.0 torchvision==0.19.0
-  uv pip install --python "${RECONVIAGEN_PYTHON}" \
-    --upgrade pip setuptools wheel packaging
-  uv pip install --python "${RECONVIAGEN_PYTHON}" \
-    fastapi pydantic pydantic-settings uvicorn \
-    pillow imageio imageio-ffmpeg tqdm easydict opencv-python-headless scipy ninja \
-    scikit-image rembg onnxruntime trimesh open3d xatlas pyvista pymeshfix igraph lpips \
-    kornia==0.8.2 timm==1.0.22 huggingface_hub==0.36.2 transformers==4.57.1 \
-    zstandard rtree fast-simplification
-  uv pip install --python "${RECONVIAGEN_PYTHON}" \
-    git+https://github.com/EasternJournalist/utils3d.git@9a4eb15e4021b67b12c460c7057d642626897ec8
+  sync_reconviagen_runtime_environment
   rm -rf /tmp/extensions
   env PATH="${RECONVIAGEN_ENV}/bin:${PATH}" bash -c \
     "cd '${RECONVIAGEN_REPO_DIR}' && . ./setup.sh --xformers --flash-attn --cumesh --o-voxel --flexgemm --nvdiffrec --spconv --kaolin --nvdiffrast"
@@ -529,21 +527,20 @@ ensure_reconviagen_runtime_dependency() {
   fi
 }
 
+sync_reconviagen_runtime_environment() {
+  log "Syncing the isolated ReconViaGen runtime environment."
+  UV_PROJECT_ENVIRONMENT="${RECONVIAGEN_ENV}" uv sync \
+    --project "${APP_DIR}/server/reconviagen-runtime" \
+    --python 3.10
+}
+
 ensure_reconviagen_runtime_patches() {
+  sync_reconviagen_runtime_environment
+
   ensure_reconviagen_runtime_dependency \
     "import o_voxel" \
     "Installing the nested ReconViaGen o-voxel extension." \
     "${RECONVIAGEN_REPO_DIR}/wheels/TRELLIS.2/o-voxel" --no-build-isolation
-
-  ensure_reconviagen_runtime_dependency \
-    "import timm" \
-    "Installing the ReconViaGen timm runtime dependency." \
-    "timm==1.0.22"
-
-  ensure_reconviagen_runtime_dependency \
-    "import scipy, skimage" \
-    "Installing ReconViaGen print-mesh repair dependencies." \
-    "scipy>=1.13" "scikit-image>=0.24"
 }
 
 reconviagen_pythonpath() {
@@ -666,7 +663,7 @@ stop_reconviagen_worker() {
 start_uvicorn() {
   log "Starting FastAPI on ${APP_HOST}:${APP_PORT}. Logs: ${APP_LOG_FILE}"
   mkdir -p "$(dirname "${APP_LOG_FILE}")"
-  uvicorn orchestration.api:app --host "${APP_HOST}" --port "${APP_PORT}" >> "${APP_LOG_FILE}" 2>&1 &
+  "${APP_UVICORN_BIN}" orchestration.api:app --host "${APP_HOST}" --port "${APP_PORT}" >> "${APP_LOG_FILE}" 2>&1 &
   APP_UVICORN_PID=$!
   printf '%s\n' "${APP_UVICORN_PID}" > "${APP_UVICORN_PID_FILE}"
 }
@@ -755,8 +752,9 @@ start_app() {
   if is_enabled "${APP_MANAGED_SERVICES}"; then
     start_managed_services
   else
+    start_reconviagen_worker
     log "Starting FastAPI on ${APP_HOST}:${APP_PORT}."
-    exec uvicorn orchestration.api:app --host "${APP_HOST}" --port "${APP_PORT}"
+    exec "${APP_UVICORN_BIN}" orchestration.api:app --host "${APP_HOST}" --port "${APP_PORT}"
   fi
 }
 
@@ -773,7 +771,6 @@ main() {
   configure_ultralytics
   prepare_vggt
   prepare_reconviagen
-  start_reconviagen_worker
   start_app "$@"
 }
 

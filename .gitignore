@@ -6,6 +6,7 @@ __pycache__/
 *.egg-info/
 runs/
 server/.env.local
+server/reconviagen-runtime/uv.lock
 DerivedData/
 build/
 *.xcuserstate

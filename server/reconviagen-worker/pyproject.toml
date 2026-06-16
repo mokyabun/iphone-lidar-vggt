@@ -6,22 +6,27 @@ build-backend = "setuptools.build_meta"
 name = "reconviagen-worker"
 version = "0.1.0"
 description = "ReconViaGen client, worker, and mesh alignment integration"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
   "fastapi>=0.115.0",
-  "numpy>=1.26.0,<2",
   "pillow>=10.0.0",
+  "pydantic>=2.7.0",
   "pydantic-settings>=2.6.0",
   "uvicorn>=0.30.0",
-  "vggt-orchestration",
 ]
 
 [project.optional-dependencies]
+client = [
+  "numpy>=1.26.0,<2",
+  "vggt-orchestration",
+]
 mesh = [
+  "numpy>=1.26.0,<2",
   "open3d>=0.18.0",
   "scikit-image>=0.24.0",
   "scipy>=1.13.0",
   "trimesh>=4.4.1",
+  "vggt-orchestration",
 ]
 
 [project.scripts]

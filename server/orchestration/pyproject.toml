@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "vggt-orchestration"
 version = "0.1.0"
 description = "FastAPI, CLI, LiDAR reconstruction, and shared scan orchestration code"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
   "fastapi>=0.115.0",
   "numpy>=1.26.0,<2",
