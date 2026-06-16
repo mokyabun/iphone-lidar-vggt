@@ -9,7 +9,8 @@ RECONVIAGEN_REPO_URL="${RECONVIAGEN_REPO_URL:-https://github.com/GAP-LAB-CUHK-SZ
 RECONVIAGEN_REPO_REF="${RECONVIAGEN_REPO_REF:-v0.5}"
 RECONVIAGEN_REPO_DIR="${RECONVIAGEN_REPO_DIR:-${APP_CACHE_ROOT}/ReconViaGen}"
 RECONVIAGEN_ENV_NAME="${RECONVIAGEN_ENV_NAME:-reconviagen-v05}"
-RECONVIAGEN_SETUP_FLAGS="${RECONVIAGEN_SETUP_FLAGS:---xformers --flash-attn --nvdiffrec --spconv --kaolin --nvdiffrast}"
+# CUDA extension flags only — --basic is always run separately.
+RECONVIAGEN_CUDA_FLAGS="${RECONVIAGEN_CUDA_FLAGS:---xformers --flash-attn --nvdiffrec --spconv --kaolin --nvdiffrast}"
 RECONVIAGEN_CUMESH_URL="${RECONVIAGEN_CUMESH_URL:-git+https://github.com/JeffreyXiang/CuMesh.git@12289e1062f0603f2f0d0771b02e1395d247f26f}"
 RECONVIAGEN_FLEX_GEMM_URL="${RECONVIAGEN_FLEX_GEMM_URL:-git+https://github.com/JeffreyXiang/FlexGEMM.git@6dd94a859c26ee8246888502eada3dd8ad85532e}"
 RECONVIAGEN_INSTALL_POSTPROCESSORS="${RECONVIAGEN_INSTALL_POSTPROCESSORS:-0}"
@@ -42,23 +43,17 @@ repo_revision() {
   git -C "${RECONVIAGEN_REPO_DIR}" rev-parse HEAD
 }
 
-setup_stamp() {
-  micromamba run -n "${RECONVIAGEN_ENV_NAME}" python - <<'PY'
-from pathlib import Path
-import sys
-print(Path(sys.prefix) / ".reconviagen-setup-stamp")
-PY
+# Stamp file lives next to the conda env prefix so it is wiped if the env
+# is recreated, which is the right time to force a rebuild.
+cuda_stamp_file() {
+  echo "${MAMBA_ROOT_PREFIX}/envs/${RECONVIAGEN_ENV_NAME}/.reconviagen-cuda-stamp"
 }
 
-runtime_stamp() {
-  # Tracks inputs that actually affect the CUDA extension build.
-  # reconviagen-environment.yml is intentionally excluded: conda package
-  # additions don't require recompiling nvdiffrast/spconv/kaolin. Major
-  # runtime changes (CUDA version, Python version) are captured by the
-  # environment name (RECONVIAGEN_ENV_NAME) and setup flags instead.
+cuda_runtime_stamp() {
+  # Only inputs that actually affect CUDA extension compilation.
   {
     printf 'repo=%s\n' "$(repo_revision)"
-    printf 'flags=%s\n' "${RECONVIAGEN_SETUP_FLAGS}"
+    printf 'cuda_flags=%s\n' "${RECONVIAGEN_CUDA_FLAGS}"
     printf 'postprocessors=%s\n' "${RECONVIAGEN_INSTALL_POSTPROCESSORS}"
   } | cksum | awk '{print $1}'
 }
@@ -84,6 +79,15 @@ if not torch.__version__.startswith("2.4."):
 PY
 }
 
+install_base_packages() {
+  # setup.sh --basic installs the pure-Python packages ReconViaGen needs
+  # (easydict, utils3d, kornia, rembg, …). This is fast with pip's cache
+  # and idempotent, so we always run it to keep packages in sync.
+  log "Installing ReconViaGen base Python packages (setup.sh --basic)."
+  micromamba run -n "${RECONVIAGEN_ENV_NAME}" bash -lc \
+    "cd '${RECONVIAGEN_REPO_DIR}' && . ./setup.sh --basic"
+}
+
 pip_install_if_missing() {
   local import_name="$1"
   shift
@@ -102,23 +106,23 @@ optional_pip_install_if_missing() {
   fi
 }
 
-run_reconviagen_setup() {
+build_cuda_extensions() {
   local stamp_file expected_stamp installed_stamp
-  stamp_file="$(setup_stamp)"
-  expected_stamp="$(runtime_stamp)"
+  stamp_file="$(cuda_stamp_file)"
+  expected_stamp="$(cuda_runtime_stamp)"
   installed_stamp=""
   if [ -f "${stamp_file}" ]; then
     installed_stamp="$(cat "${stamp_file}")"
   fi
   if [ "${RECONVIAGEN_REFRESH}" != "1" ] && [ "${installed_stamp}" = "${expected_stamp}" ]; then
-    log "ReconViaGen setup is already current."
+    log "ReconViaGen CUDA extensions are already current."
     return 0
   fi
 
-  log "Running ReconViaGen setup.sh. This can take a while on a fresh pod."
+  log "Building ReconViaGen CUDA extensions. This can take a while on a fresh pod."
   rm -rf /tmp/extensions
   micromamba run -n "${RECONVIAGEN_ENV_NAME}" bash -lc \
-    "cd '${RECONVIAGEN_REPO_DIR}' && . ./setup.sh ${RECONVIAGEN_SETUP_FLAGS}"
+    "cd '${RECONVIAGEN_REPO_DIR}' && . ./setup.sh ${RECONVIAGEN_CUDA_FLAGS}"
 
   if [ "${RECONVIAGEN_INSTALL_POSTPROCESSORS}" = "1" ]; then
     optional_pip_install_if_missing cumesh "${RECONVIAGEN_CUMESH_URL}" --no-build-isolation --no-deps
@@ -129,6 +133,7 @@ run_reconviagen_setup() {
   else
     log "Skipping optional postprocessors. Set RECONVIAGEN_INSTALL_POSTPROCESSORS=1 to try CuMesh/FlexGEMM/o-voxel."
   fi
+
   mkdir -p "$(dirname "${stamp_file}")"
   printf '%s\n' "${expected_stamp}" > "${stamp_file}"
 }
@@ -143,21 +148,9 @@ if [ "$(uname -s)" != "Linux" ]; then
   exit 0
 fi
 
-# Fast path: if the CUDA extension stamp already matches the current inputs
-# (repo hash + flags + postprocessors) and the env exists, skip sync and
-# rebuild entirely. This avoids recompiling nvdiffrast/spconv/kaolin on
-# every server restart when nothing relevant has changed.
-if [ "${RECONVIAGEN_REFRESH}" != "1" ] && env_exists && [ -d "${RECONVIAGEN_REPO_DIR}/.git" ]; then
-  _current_stamp="$(runtime_stamp 2>/dev/null || true)"
-  _installed_stamp="$(setup_stamp 2>/dev/null | xargs cat 2>/dev/null || true)"
-  if [ -n "${_current_stamp}" ] && [ "${_installed_stamp}" = "${_current_stamp}" ]; then
-    log "ReconViaGen setup is already current (stamp matched). Skipping sync and rebuild."
-    exit 0
-  fi
-fi
-
 sync_repo
 ensure_env
 verify_torch
-run_reconviagen_setup
+install_base_packages
+build_cuda_extensions
 log "ReconViaGen is ready in micromamba env ${RECONVIAGEN_ENV_NAME}."
