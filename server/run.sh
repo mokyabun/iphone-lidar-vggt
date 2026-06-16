@@ -208,6 +208,7 @@ init_defaults() {
   set_default TORCH_NUM_INTEROP_THREADS "1"
   set_default TORCH_CUDNN_BENCHMARK "1"
   set_default TORCH_FLOAT32_MATMUL_PRECISION "high"
+  set_default MAX_JOBS "2"
 
   set_default XDG_CACHE_HOME "${APP_CACHE_ROOT}/xdg"
   set_default XDG_CONFIG_HOME "${APP_CACHE_ROOT}/config"
@@ -241,6 +242,8 @@ init_defaults() {
   set_default RECONVIAGEN_WORKER_RESTART "1"
   set_default RECONVIAGEN_WORKER_RESTART_DELAY_SECONDS "20"
   set_default RECONVIAGEN_DINO_MODEL "facebook/dinov3-vitl16-pretrain-lvd1689m"
+  set_default RECONVIAGEN_CUMESH_URL "git+https://github.com/JeffreyXiang/CuMesh.git@12289e1062f0603f2f0d0771b02e1395d247f26f"
+  set_default RECONVIAGEN_FLEX_GEMM_URL "git+https://github.com/JeffreyXiang/FlexGEMM.git@6dd94a859c26ee8246888502eada3dd8ad85532e"
   set_default SPCONV_ALGO "native"
   set_default OPENCV_IO_ENABLE_OPENEXR "1"
   set_default PYTORCH_CUDA_ALLOC_CONF "expandable_segments:True"
@@ -674,9 +677,17 @@ ensure_reconviagen_runtime_patches() {
   sync_reconviagen_runtime_environment
 
   ensure_reconviagen_runtime_dependency \
+    "import cumesh" \
+    "Installing the nested ReconViaGen CuMesh extension." \
+    "${RECONVIAGEN_CUMESH_URL}" --no-build-isolation --no-deps
+  ensure_reconviagen_runtime_dependency \
+    "import flex_gemm" \
+    "Installing the nested ReconViaGen FlexGEMM extension." \
+    "${RECONVIAGEN_FLEX_GEMM_URL}" --no-build-isolation --no-deps
+  ensure_reconviagen_runtime_dependency \
     "import o_voxel" \
     "Installing the nested ReconViaGen o-voxel extension." \
-    "${RECONVIAGEN_REPO_DIR}/wheels/TRELLIS.2/o-voxel" --no-build-isolation
+    "${RECONVIAGEN_REPO_DIR}/wheels/TRELLIS.2/o-voxel" --no-build-isolation --no-deps
 }
 
 reconviagen_pythonpath() {
