@@ -12,6 +12,7 @@ RECONVIAGEN_ENV_NAME="${RECONVIAGEN_ENV_NAME:-reconviagen-v05}"
 RECONVIAGEN_SETUP_FLAGS="${RECONVIAGEN_SETUP_FLAGS:---xformers --flash-attn --nvdiffrec --spconv --kaolin --nvdiffrast}"
 RECONVIAGEN_CUMESH_URL="${RECONVIAGEN_CUMESH_URL:-git+https://github.com/JeffreyXiang/CuMesh.git@12289e1062f0603f2f0d0771b02e1395d247f26f}"
 RECONVIAGEN_FLEX_GEMM_URL="${RECONVIAGEN_FLEX_GEMM_URL:-git+https://github.com/JeffreyXiang/FlexGEMM.git@6dd94a859c26ee8246888502eada3dd8ad85532e}"
+RECONVIAGEN_INSTALL_POSTPROCESSORS="${RECONVIAGEN_INSTALL_POSTPROCESSORS:-0}"
 RECONVIAGEN_REFRESH="${RECONVIAGEN_REFRESH:-0}"
 
 log() {
@@ -53,6 +54,7 @@ runtime_stamp() {
   {
     printf 'repo=%s\n' "$(repo_revision)"
     printf 'flags=%s\n' "${RECONVIAGEN_SETUP_FLAGS}"
+    printf 'postprocessors=%s\n' "${RECONVIAGEN_INSTALL_POSTPROCESSORS}"
     cksum "${SERVER_DIR}/reconviagen-environment.yml"
   } | cksum | awk '{print $1}'
 }
@@ -88,6 +90,14 @@ pip_install_if_missing() {
   micromamba run -n "${RECONVIAGEN_ENV_NAME}" python -m pip install "$@"
 }
 
+optional_pip_install_if_missing() {
+  local import_name="$1"
+  shift
+  if ! pip_install_if_missing "${import_name}" "$@"; then
+    log "Optional ${import_name} install failed; continuing with raw mesh export fallback."
+  fi
+}
+
 run_reconviagen_setup() {
   local stamp_file expected_stamp installed_stamp
   stamp_file="$(setup_stamp)"
@@ -106,10 +116,14 @@ run_reconviagen_setup() {
   micromamba run -n "${RECONVIAGEN_ENV_NAME}" bash -lc \
     "cd '${RECONVIAGEN_REPO_DIR}' && . ./setup.sh ${RECONVIAGEN_SETUP_FLAGS}"
 
-  pip_install_if_missing cumesh "${RECONVIAGEN_CUMESH_URL}" --no-build-isolation --no-deps
-  pip_install_if_missing flex_gemm "${RECONVIAGEN_FLEX_GEMM_URL}" --no-build-isolation --no-deps
-  if [ -d "${RECONVIAGEN_REPO_DIR}/wheels/TRELLIS.2/o-voxel" ]; then
-    pip_install_if_missing o_voxel "${RECONVIAGEN_REPO_DIR}/wheels/TRELLIS.2/o-voxel" --no-build-isolation --no-deps
+  if [ "${RECONVIAGEN_INSTALL_POSTPROCESSORS}" = "1" ]; then
+    optional_pip_install_if_missing cumesh "${RECONVIAGEN_CUMESH_URL}" --no-build-isolation --no-deps
+    optional_pip_install_if_missing flex_gemm "${RECONVIAGEN_FLEX_GEMM_URL}" --no-build-isolation --no-deps
+    if [ -d "${RECONVIAGEN_REPO_DIR}/wheels/TRELLIS.2/o-voxel" ]; then
+      optional_pip_install_if_missing o_voxel "${RECONVIAGEN_REPO_DIR}/wheels/TRELLIS.2/o-voxel" --no-build-isolation --no-deps
+    fi
+  else
+    log "Skipping optional postprocessors. Set RECONVIAGEN_INSTALL_POSTPROCESSORS=1 to try CuMesh/FlexGEMM/o-voxel."
   fi
   mkdir -p "$(dirname "${stamp_file}")"
   printf '%s\n' "${expected_stamp}" > "${stamp_file}"

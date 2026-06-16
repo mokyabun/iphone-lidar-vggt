@@ -51,7 +51,6 @@ class ReconViaGenService:
 
     def generate(self, input_dir: Path, output_path: Path) -> None:
         from PIL import Image
-        import o_voxel
 
         image_paths = sorted(input_dir.glob("view_*.png"))
         if not image_paths:
@@ -73,24 +72,31 @@ class ReconViaGenService:
             ss_source=reconviagen_settings().ss_source,
         )
         mesh = meshes[0]
-        resolution = latents[2]
-        glb = o_voxel.postprocess.to_glb(
-            vertices=mesh.vertices,
-            faces=mesh.faces,
-            attr_volume=mesh.attrs,
-            coords=mesh.coords,
-            attr_layout=self.pipeline.pbr_attr_layout,
-            grid_size=resolution,
-            aabb=[[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]],
-            decimation_target=reconviagen_settings().decimation_target,
-            texture_size=reconviagen_settings().texture_size,
-            remesh=True,
-            remesh_band=1,
-            remesh_project=0,
-            use_tqdm=True,
-        )
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        glb.export(output_path, extension_webp=True)
+        try:
+            import o_voxel
+
+            resolution = latents[2]
+            glb = o_voxel.postprocess.to_glb(
+                vertices=mesh.vertices,
+                faces=mesh.faces,
+                attr_volume=mesh.attrs,
+                coords=mesh.coords,
+                attr_layout=self.pipeline.pbr_attr_layout,
+                grid_size=resolution,
+                aabb=[[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]],
+                decimation_target=reconviagen_settings().decimation_target,
+                texture_size=reconviagen_settings().texture_size,
+                remesh=True,
+                remesh_band=1,
+                remesh_project=0,
+                use_tqdm=True,
+            )
+            glb.export(output_path, extension_webp=True)
+        except Exception as exc:
+            print(f"[reconviagen] textured postprocess failed: {exc}", flush=True)
+            print("[reconviagen] exporting raw geometry fallback", flush=True)
+            _export_raw_mesh(mesh, output_path)
         self.torch.cuda.empty_cache()
         print(f"[reconviagen] wrote {output_path}", flush=True)
 
@@ -125,3 +131,20 @@ def _sampler_params() -> dict[str, dict[str, object]]:
         },
     }
 
+
+def _export_raw_mesh(mesh: object, output_path: Path) -> None:
+    import numpy as np
+    import trimesh
+
+    vertices = _as_numpy(mesh.vertices)
+    faces = _as_numpy(mesh.faces).astype(np.int64, copy=False)
+    raw_mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=True)
+    raw_mesh.export(output_path, file_type="glb")
+
+
+def _as_numpy(value: object):
+    if hasattr(value, "detach"):
+        return value.detach().cpu().numpy()
+    if hasattr(value, "cpu"):
+        return value.cpu().numpy()
+    return value

@@ -18,6 +18,7 @@ dependencies:
   - fastapi>=0.115
   - uvicorn>=0.30
   - pillow>=10
+  - trimesh>=4.4
   - pydantic>=2.7
   - pydantic-settings>=2.6
   - huggingface_hub>=0.24
