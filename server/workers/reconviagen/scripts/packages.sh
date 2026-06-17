@@ -27,16 +27,25 @@ verify_reconviagen_base_package_pins() {
   venv_run "${RECONVIAGEN_ENV_DIR}" python - <<'PY'
 from importlib.metadata import version
 
-expected = {
+from packaging.version import Version
+
+exact_expected = {
     "huggingface-hub": "0.33.4",
-    "transformers": "4.46.3",
     "kornia": "0.8.2",
 }
-for package, expected_version in expected.items():
+minimum_expected = {
+    "transformers": "4.56.0",
+}
+for package, expected_version in exact_expected.items():
     installed = version(package)
     print(f"[prepare-reconviagen] {package}={installed}")
     if installed != expected_version:
         raise SystemExit(f"[prepare-reconviagen] Expected {package}=={expected_version}, got {installed}.")
+for package, minimum_version in minimum_expected.items():
+    installed = version(package)
+    print(f"[prepare-reconviagen] {package}={installed}")
+    if Version(installed) < Version(minimum_version):
+        raise SystemExit(f"[prepare-reconviagen] Expected {package}>={minimum_version}, got {installed}.")
 PY
 }
 

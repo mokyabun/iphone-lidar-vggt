@@ -30,7 +30,7 @@ igraph==0.11.8
 git+https://github.com/EasternJournalist/utils3d.git@9a4eb15e4021b67b12c460c7057d642626897ec8
 xformers==0.0.27.post2
 spconv-cu120==2.3.6
-transformers==4.46.3
+transformers>=4.56.0,<5
 einops==0.8.1
 huggingface_hub==0.33.4
 lpips==0.1.4
