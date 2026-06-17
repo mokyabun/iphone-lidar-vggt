@@ -30,7 +30,9 @@ start_reconviagen_worker() {
   LOG_PREFIX="run.sh" log "Starting ReconViaGen worker on ${RECONVIAGEN_WORKER_URL}; logging to ${RECONVIAGEN_WORKER_LOG}."
   (
     cd "${SERVER_DIR}"
-    exec venv_run "${RECONVIAGEN_ENV_DIR}" env \
+    exec env \
+      VIRTUAL_ENV="${RECONVIAGEN_ENV_DIR}" \
+      PATH="${RECONVIAGEN_ENV_DIR}/bin:${PATH}" \
       PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}" \
       PYTHONPATH="${SERVER_DIR}:${PYTHONPATH:-}" \
       python -u -m workers.reconviagen.main \
