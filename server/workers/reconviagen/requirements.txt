@@ -32,7 +32,7 @@ xformers==0.0.27.post2
 spconv-cu120==2.3.6
 transformers>=4.56.0,<5
 einops==0.8.1
-huggingface_hub==0.33.4
+huggingface_hub>=0.34.0,<1
 lpips==0.1.4
 dreamsim==0.2.1
 kornia==0.8.2

@@ -30,10 +30,10 @@ from importlib.metadata import version
 from packaging.version import Version
 
 exact_expected = {
-    "huggingface-hub": "0.33.4",
     "kornia": "0.8.2",
 }
 minimum_expected = {
+    "huggingface-hub": "0.34.0",
     "transformers": "4.56.0",
 }
 for package, expected_version in exact_expected.items():
