@@ -24,6 +24,7 @@ export RECONVIAGEN_CUMESH_URL="${RECONVIAGEN_CUMESH_URL:-${RECONVIAGEN_TRELLIS2_
 export RECONVIAGEN_FLEX_GEMM_URL="${RECONVIAGEN_FLEX_GEMM_URL:-${RECONVIAGEN_TRELLIS2_WHEEL_BASE}/flex_gemm-0.0.1-cp310-cp310-linux_x86_64.whl}"
 export RECONVIAGEN_O_VOXEL_URL="${RECONVIAGEN_O_VOXEL_URL:-${RECONVIAGEN_TRELLIS2_WHEEL_BASE}/o_voxel-0.0.1-cp310-cp310-linux_x86_64.whl}"
 export RECONVIAGEN_INSTALL_POSTPROCESSORS="${RECONVIAGEN_INSTALL_POSTPROCESSORS:-1}"
+export RECONVIAGEN_FIX_LIBSTDCXX="${RECONVIAGEN_FIX_LIBSTDCXX:-1}"
 export RECONVIAGEN_REFRESH="${RECONVIAGEN_REFRESH:-0}"
 
 . "${SERVER_DIR}/scripts/lib/common.sh"
@@ -46,5 +47,6 @@ ensure_reconviagen_env
 verify_reconviagen_torch
 install_reconviagen_base_packages
 verify_reconviagen_base_package_pins
+ensure_reconviagen_libstdcxx
 build_reconviagen_cuda_extensions
 LOG_PREFIX="prepare-reconviagen" log "ReconViaGen is ready in uv env ${RECONVIAGEN_ENV_NAME} at ${RECONVIAGEN_ENV_DIR}."
