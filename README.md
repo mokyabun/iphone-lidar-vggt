@@ -1,111 +1,142 @@
-# ReconViaGen + LiDAR Scale
+# iPhone LiDAR + ReconViaGen
 
-This repo was simplified from the previous VGGT/LiDAR experiment. The old project is preserved under `_legacy/`.
-
-The new project has one job:
+This project captures RGB-D object scans on an iPhone with LiDAR, sends the scan package to a FastAPI backend, runs ReconViaGen on multi-view crops, then aligns the generated mesh back to real-world LiDAR scale.
 
 ```text
 iPhone LiDAR ScanPackage.zip
-  -> depth-only object mask
-  -> metric LiDAR reference cloud
+  -> RGB images + depth + confidence + camera poses
+  -> depth-based central object mask
+  -> metric LiDAR reference point cloud
   -> ReconViaGen multi-view RGBA crops
   -> ReconViaGen raw mesh
   -> LiDAR scale + PCA/ICP alignment
-  -> metric PLY/GLB/STL outputs
+  -> metric PLY / GLB / STL outputs
 ```
 
-## What Was Removed
+![iOS app screen](docs/app-screen.png)
 
-The active project no longer uses:
+![Point cloud result](docs/point-cloud-result.png)
 
-- `uv`, `uv.lock`, or the uv workspace layout
-- standalone `vggt-worker`
-- standalone VGGT point-cloud pipeline
-- Open3D TSDF reconstruction
-- Open3D printable mesh fallback
-- SAM/Ultralytics/TIMM segmentation path
-- iOS pipeline selector and `Color/Object/Mesh` toggles
+## Repository Layout
 
-The active server dependency set is intentionally small:
+- `ios/VGGTLiDARScanApp`: SwiftUI iPhone app for LiDAR capture, scan package export, backend upload, result preview, and sharing.
+- `server/api`: FastAPI orchestrator for scan parsing, LiDAR point-cloud generation, ReconViaGen routing, metric alignment, and asset export.
+- `server/workers/reconviagen`: ReconViaGen worker that runs in a separate micromamba environment.
+- `server/run.sh`: Main server entrypoint. It prepares the API environment, prepares/starts the ReconViaGen worker, then starts the API.
+- `docs`: README screenshots and result images.
 
-- `fastapi`
-- `uvicorn`
-- `python-multipart`
-- `numpy`
-- `pillow`
-- `scipy`
-- `trimesh`
+## iOS App
 
-ReconViaGen runs in a separate micromamba worker env so the API/orchestrator env stays small. The orchestrator owns scan parsing, crop preparation, worker routing, and LiDAR metric alignment.
-
-## Server
-
-Install/run with micromamba:
+Open the Xcode project:
 
 ```bash
-cd server
-chmod +x run.sh
-./run.sh
+open ios/VGGTLiDARScanApp.xcodeproj
 ```
 
-By default `run.sh` prepares ReconViaGen `v0.5` under `/workspace/cache/ReconViaGen`, creates/reuses the `api` and `worker-reconviagen` micromamba envs, starts a local worker on `127.0.0.1:8011`, then starts the API on `0.0.0.0:8000`.
+The app has a single scan-to-result flow:
 
-RunPod entrypoint:
+1. Capture LiDAR frames with `Scan` or `Capture`.
+2. Export a `ScanPackage.zip`.
+3. Upload the package with `Process`.
+4. Poll the backend job until reconstruction is complete.
+5. Download `reconviagen_metric.ply`.
+6. Preview and export the result from the result screen.
+
+The backend URL can be changed from the gear button in the app. When testing on a physical iPhone, use an address the device can reach. `http://127.0.0.1:8000` only works from the same machine or simulator context.
+
+## RunPod Entrypoint
+
+This is the current one-command RunPod-style entrypoint:
 
 ```bash
 bash -lc 'cd /workspace && if [ ! -d iphone-lidar-vggt/.git ]; then git clone https://github.com/mokyabun/iphone-lidar-vggt.git; fi && cd iphone-lidar-vggt && git fetch origin && git reset --hard origin/main && cd server && ./run.sh'
 ```
 
-Useful switches:
+If gated Hugging Face weights are required, provide a token:
 
 ```bash
-export APP_PREPARE_RECONVIAGEN=0   # skip ReconViaGen install/update
-export APP_START_RECONVIAGEN=0     # start only the API/orchestrator
-export APP_UPDATE_ENVS=1           # update existing micromamba envs from yml files
-export RECONVIAGEN_REFRESH=1       # force ReconViaGen setup.sh again
-export HF_TOKEN=...                # required if gated Hugging Face weights need auth
+export HF_TOKEN=...
 ```
 
-Repeated runs reuse existing envs by default and keep build/download caches under `/workspace/cache`: pip downloads, Hugging Face models, PyTorch extension builds, and ccache compiler objects.
+`run.sh` maps `HF_TOKEN` to `HUGGINGFACE_HUB_TOKEN` when the latter is not already set.
 
-You can still override the generator with a command:
+## Useful Environment Variables
+
+Server/runtime:
+
+```bash
+export APP_HOST=0.0.0.0
+export APP_PORT=8000
+export APP_CACHE_ROOT=/workspace/cache
+export APP_RUN_ROOT=runs/api
+export APP_UPDATE_ENVS=1
+```
+
+ReconViaGen setup and worker control:
+
+```bash
+export APP_PREPARE_RECONVIAGEN=0
+export APP_START_RECONVIAGEN=0
+export RECONVIAGEN_REFRESH=1
+export RECONVIAGEN_TIMEOUT_SECONDS=2400
+```
+
+Scan processing and alignment:
+
+```bash
+export SCAN_MAX_FRAMES=24
+export SCAN_STRIDE=4
+export SCAN_CONFIDENCE_MINIMUM=1
+export RECONVIAGEN_MAX_IMAGES=6
+export RECONVIAGEN_INPUT_SIZE=512
+export RECONVIAGEN_CROP_PADDING=0.18
+export OBJECT_DEPTH_BAND_METERS=0.45
+export OBJECT_CENTER_FRACTION=0.35
+export OBJECT_POINT_VOXEL_METERS=0.006
+export ALIGNMENT_SAMPLES=6000
+export ALIGNMENT_ICP_ITERATIONS=8
+export EXPORT_PRINT_STL=1
+```
+
+External generator overrides:
 
 ```bash
 export RECONVIAGEN_COMMAND='python /path/to/reconviagen_runner.py --input-dir {input_dir} --output-path {output_path}'
-```
-
-or an external worker URL:
-
-```bash
 export RECONVIAGEN_WORKER_URL='http://127.0.0.1:8011'
 ```
 
-For a smoke test without ReconViaGen:
+`RECONVIAGEN_COMMAND` must read ReconViaGen input images from `{input_dir}` and write a `trimesh`-readable mesh to `{output_path}`.
+
+## API
+
+Main endpoints:
+
+```text
+GET  /health
+GET  /capabilities
+POST /jobs                      multipart field: scan_package
+GET  /jobs/{job_id}
+GET  /jobs/{job_id}/result      reconviagen_metric.ply
+GET  /jobs/{job_id}/preview     reconviagen_metric.glb
+GET  /jobs/{job_id}/print       reconviagen_metric_print_mm.stl
+GET  /jobs/{job_id}/lidar       lidar_reference.ply
+POST /reconstruct               synchronous development endpoint
+```
+
+The iOS app uses the asynchronous job flow. `POST /jobs` returns a queued job, `GET /jobs/{job_id}` reports `queued`, `processing`, `complete`, or `failed`, and `/result` returns the final metric PLY when complete.
+
+## Smoke Test Mode
+
+Use mock mode to test upload, job polling, scan parsing, alignment, and result download without running the real ReconViaGen model:
 
 ```bash
 cd server
 RECONVIAGEN_MOCK=1 ./run.sh
 ```
 
-The mock writes a synthetic mesh so you can test upload/job/result plumbing before fighting CUDA/model installs.
+Mock mode writes a synthetic mesh while preserving the API and export flow.
 
-## API
+## Current Scope
 
-- `GET /health`
-- `GET /capabilities`
-- `POST /jobs` with multipart field `scan_package`
-- `GET /jobs/{job_id}`
-- `GET /jobs/{job_id}/result` -> `reconviagen_metric.ply`
-- `GET /jobs/{job_id}/preview` -> `reconviagen_metric.glb`
-- `GET /jobs/{job_id}/print` -> `reconviagen_metric_print_mm.stl`
-- `GET /jobs/{job_id}/lidar` -> `lidar_reference.ply`
+This repository is now focused on the ReconViaGen + LiDAR scale-alignment path. The active project no longer includes the older standalone VGGT point-cloud pipeline, Open3D TSDF reconstruction path, SAM/Ultralytics/TIMM segmentation path, or the previous iOS pipeline selector/toggle UI.
 
-## iOS
-
-Open:
-
-```bash
-open ios/VGGTLiDARScanApp.xcodeproj
-```
-
-The app now exposes one flow: scan, process, preview/export. Backend settings still let you change the server URL.
