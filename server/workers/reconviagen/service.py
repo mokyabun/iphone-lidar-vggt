@@ -7,7 +7,10 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-from .settings import ReconViaGenSettings, reconviagen_settings
+try:
+    from .settings import ReconViaGenSettings, reconviagen_settings
+except ImportError:
+    from settings import ReconViaGenSettings, reconviagen_settings
 
 
 class ReconViaGenService:

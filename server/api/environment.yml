@@ -1,4 +1,4 @@
-name: lidar-reconviagen
+name: api
 channels:
   - conda-forge
 dependencies:

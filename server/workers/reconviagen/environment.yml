@@ -1,4 +1,4 @@
-name: reconviagen-v05
+name: worker-reconviagen
 channels:
   - pytorch
   - nvidia
@@ -13,6 +13,7 @@ dependencies:
   - numpy>=1.26,<2
   - git
   - git-lfs
+  - ccache
   - cmake
   - ninja
   - fastapi>=0.115

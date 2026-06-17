@@ -12,8 +12,8 @@ from pydantic import BaseModel
 try:
     from .service import ReconViaGenService
 except ImportError:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from reconviagen_worker.service import ReconViaGenService
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from service import ReconViaGenService
 
 
 class GenerateRequest(BaseModel):
