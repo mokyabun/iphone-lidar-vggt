@@ -25,7 +25,7 @@ If the base image already has compatible PyTorch 2.4.x packages, set `RECONVIAGE
 
 `./run.sh` streams API and worker logs to the terminal. The managed worker log is also written to `${RECONVIAGEN_WORKER_LOG:-${APP_CACHE_ROOT}/worker-reconviagen.log}`. CUDA is required by default; if PyTorch cannot see a GPU, prepare/worker startup prints the torch build, `CUDA_VISIBLE_DEVICES`, device count, and `nvidia-smi` output before failing. If a reused env has a CPU-only torch build, rerun with `APP_UPDATE_ENVS=1`.
 
-The TRELLIS.2 postprocessor packages default to prebuilt CPython 3.10 Linux wheels from the Microsoft TRELLIS.2 Hugging Face Space. Override `RECONVIAGEN_CUMESH_URL`, `RECONVIAGEN_FLEX_GEMM_URL`, or `RECONVIAGEN_O_VOXEL_URL` only when you need to build from another source.
+The TRELLIS.2 textured GLB postprocessor packages default to prebuilt CPython 3.10 Linux wheels from the Microsoft TRELLIS.2 Hugging Face Space. Those CuMesh/o-voxel wheels require a recent `libstdc++` with `GLIBCXX_3.4.32`; prepare will try to install a newer `libstdc++6` on apt-based root containers. Set `RECONVIAGEN_FIX_LIBSTDCXX=0` to disable that system package change. Override `RECONVIAGEN_CUMESH_URL`, `RECONVIAGEN_FLEX_GEMM_URL`, or `RECONVIAGEN_O_VOXEL_URL` only when you need to build from another source.
 
 ## ReconViaGen Worker
 

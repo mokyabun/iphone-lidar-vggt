@@ -60,8 +60,11 @@ class ReconViaGenService:
 
         self.torch = torch
         low_vram = settings.low_vram
+        with _timed("resolve sparse-structure model snapshot"):
+            ss_model = _snapshot_path(settings.ss_model)
+        _log(f"sparse-structure model path: {ss_model}")
         with _timed("load sparse-structure pipeline"):
-            vggt_pipeline = TrellisVGGTTo3DPipeline.from_pretrained(settings.ss_model)
+            vggt_pipeline = TrellisVGGTTo3DPipeline.from_pretrained(str(ss_model))
         with _timed("move sparse-structure pipeline to cuda"):
             vggt_pipeline.cuda()
             vggt_pipeline.VGGT_model.cuda()
@@ -202,11 +205,18 @@ def _sampler_params(settings: ReconViaGenSettings) -> dict[str, dict[str, object
 def _snapshot_path(model: str) -> Path | str:
     path = Path(model).expanduser()
     if path.exists():
+        _log(f"model path exists locally: {path}")
+        _log_directory_summary(path)
         return path
 
     from huggingface_hub import snapshot_download
 
-    return Path(snapshot_download(model))
+    _log(f"resolving Hugging Face model snapshot: repo={model}")
+    started = time.perf_counter()
+    snapshot = Path(snapshot_download(model))
+    _log(f"resolved Hugging Face snapshot in {time.perf_counter() - started:.1f}s: {snapshot}")
+    _log_directory_summary(snapshot)
+    return snapshot
 
 
 def _log(message: str) -> None:
@@ -275,6 +285,34 @@ def _log_cuda_diagnostics(torch) -> None:
         return
     output = (result.stdout or result.stderr).strip()
     _log(f"nvidia-smi: returncode={result.returncode} output={output or '<empty>'}")
+
+
+def _log_directory_summary(path: Path) -> None:
+    try:
+        files = [item for item in path.rglob("*") if item.is_file()]
+    except Exception as exc:
+        _log(f"model directory summary failed for {path}: {exc}")
+        return
+    total_bytes = 0
+    missing_size = 0
+    for item in files:
+        try:
+            total_bytes += item.stat().st_size
+        except OSError:
+            missing_size += 1
+    largest_items: list[tuple[int, str]] = []
+    for item in files:
+        try:
+            largest_items.append((item.stat().st_size, item.name))
+        except OSError:
+            continue
+    largest = sorted(largest_items, reverse=True)[:5]
+    largest_summary = ", ".join(f"{name}:{size / (1024**3):.2f}GiB" for size, name in largest)
+    _log(
+        f"model snapshot summary: path={path} files={len(files)} "
+        f"size={total_bytes / (1024**3):.2f}GiB unreadable_files={missing_size} "
+        f"largest=[{largest_summary}]"
+    )
 
 
 def _image_summary(path: Path, image: object) -> str:
