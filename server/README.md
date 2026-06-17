@@ -16,8 +16,10 @@ This server keeps the app layer thin while still managing a local ReconViaGen wo
 
 `run.sh` manages two envs:
 
-- `lidar-reconviagen`: small FastAPI/LiDAR alignment server.
-- `reconviagen-v05`: heavy ReconViaGen worker, prepared from `reconviagen-environment.yml`.
+- `api`: FastAPI orchestrator for scan parsing, job routing, LiDAR alignment, and asset export; prepared from `api/environment.yml`.
+- `worker-reconviagen`: ReconViaGen AI worker; prepared from `workers/reconviagen/environment.yml`.
+
+Existing envs are reused by default to avoid repeated dependency solving. Set `APP_UPDATE_ENVS=1` when you want to apply dependency file changes.
 
 ## ReconViaGen Worker
 
@@ -30,7 +32,7 @@ APP_PREPARE_RECONVIAGEN=1 APP_START_RECONVIAGEN=1 ./run.sh
 One-shot worker runner:
 
 ```bash
-micromamba run -n reconviagen-v05 python -m reconviagen_worker.main \
+micromamba run -n worker-reconviagen env PYTHONPATH="$PWD" python -m workers.reconviagen.main \
   --once \
   --input-dir /path/to/reconviagen_views \
   --output-path /path/to/raw_reconviagen.glb
@@ -44,6 +46,21 @@ export RECONVIAGEN_WORKER_URL='http://127.0.0.1:8011'
 ```
 
 The command/worker must write a GLB or other `trimesh`-readable mesh to `{output_path}`.
+
+## Script Layout
+
+- `run.sh`: top-level orchestrator.
+- `api/*.py`: orchestrator code.
+- `api/environment.yml`: API micromamba env.
+- `scripts/install/micromamba.sh`: micromamba bootstrap.
+- `scripts/env/api.sh`: API env create/update.
+- `scripts/env/build_cache.sh`: persistent pip, torch extension, Hugging Face, and ccache paths.
+- `workers/reconviagen/environment.yml`: ReconViaGen worker micromamba env.
+- `workers/reconviagen/*.py`: ReconViaGen AI worker code.
+- `workers/reconviagen/scripts/prepare.sh`: ReconViaGen worker setup.
+- `workers/reconviagen/scripts/*.sh`: split repo/env/package/CUDA-extension steps.
+
+`scripts/prepare_reconviagen.sh` remains as a compatibility wrapper.
 
 ## Smoke Test Mode
 

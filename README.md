@@ -36,7 +36,7 @@ The active server dependency set is intentionally small:
 - `scipy`
 - `trimesh`
 
-ReconViaGen runs in a separate micromamba worker env so the thin API env stays small. The server owns scan parsing, crop preparation, worker orchestration, and LiDAR metric alignment.
+ReconViaGen runs in a separate micromamba worker env so the API/orchestrator env stays small. The orchestrator owns scan parsing, crop preparation, worker routing, and LiDAR metric alignment.
 
 ## Server
 
@@ -48,7 +48,7 @@ chmod +x run.sh
 ./run.sh
 ```
 
-By default `run.sh` prepares ReconViaGen `v0.5` under `/workspace/cache/ReconViaGen`, creates the `reconviagen-v05` micromamba env, starts a local worker on `127.0.0.1:8011`, then starts the API on `0.0.0.0:8000`.
+By default `run.sh` prepares ReconViaGen `v0.5` under `/workspace/cache/ReconViaGen`, creates/reuses the `api` and `worker-reconviagen` micromamba envs, starts a local worker on `127.0.0.1:8011`, then starts the API on `0.0.0.0:8000`.
 
 RunPod entrypoint:
 
@@ -60,10 +60,13 @@ Useful switches:
 
 ```bash
 export APP_PREPARE_RECONVIAGEN=0   # skip ReconViaGen install/update
-export APP_START_RECONVIAGEN=0     # start only the API
+export APP_START_RECONVIAGEN=0     # start only the API/orchestrator
+export APP_UPDATE_ENVS=1           # update existing micromamba envs from yml files
 export RECONVIAGEN_REFRESH=1       # force ReconViaGen setup.sh again
 export HF_TOKEN=...                # required if gated Hugging Face weights need auth
 ```
+
+Repeated runs reuse existing envs by default and keep build/download caches under `/workspace/cache`: pip downloads, Hugging Face models, PyTorch extension builds, and ccache compiler objects.
 
 You can still override the generator with a command:
 
