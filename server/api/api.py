@@ -5,6 +5,7 @@ import shutil
 import threading
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -37,6 +38,7 @@ def capabilities() -> dict[str, object]:
 @app.post("/jobs", status_code=202)
 def create_job(scan_package: UploadFile = File(...)) -> dict[str, object]:
     job_id, job_dir, package_path = _store_upload(scan_package)
+    _log(f"job {job_id}: queued package={package_path}")
     _write_status(job_dir, "queued")
     thread = threading.Thread(target=_run_job, args=(job_id, package_path, job_dir), daemon=True)
     thread.start()
@@ -46,8 +48,11 @@ def create_job(scan_package: UploadFile = File(...)) -> dict[str, object]:
 @app.post("/reconstruct")
 def reconstruct_now(scan_package: UploadFile = File(...)) -> FileResponse:
     job_id, job_dir, package_path = _store_upload(scan_package)
+    _log(f"job {job_id}: synchronous reconstruction requested package={package_path}")
     with _LOCK:
+        _log(f"job {job_id}: synchronous reconstruction started")
         result = reconstruct_scan(package_path, job_dir / "output")
+    _log(f"job {job_id}: synchronous reconstruction complete output={result.final_output}")
     return FileResponse(
         result.final_output,
         filename="reconviagen_metric.ply",
@@ -105,21 +110,27 @@ def _store_upload(scan_package: UploadFile) -> tuple[str, Path, Path]:
     package_path = job_dir / "ScanPackage.zip"
     with package_path.open("wb") as handle:
         shutil.copyfileobj(scan_package.file, handle)
+    size = package_path.stat().st_size if package_path.exists() else 0
+    _log(f"job {job_id}: stored upload filename={scan_package.filename!r} bytes={size}")
     return job_id, job_dir, package_path
 
 
 def _run_job(job_id: str, package_path: Path, job_dir: Path) -> None:
-    del job_id
     started = time.monotonic()
+    _log(f"job {job_id}: waiting for reconstruction lock")
     with _LOCK:
+        _log(f"job {job_id}: processing started")
         _write_status(job_dir, "processing")
         try:
             reconstruct_scan(package_path, job_dir / "output")
         except Exception as exc:
+            _log(f"job {job_id}: failed after {time.monotonic() - started:.1f}s: {exc}")
             (job_dir / "error.txt").write_text(str(exc))
             _write_status(job_dir, "failed")
             return
-        _write_status(job_dir, "complete", elapsed_seconds=round(time.monotonic() - started, 1))
+        elapsed = round(time.monotonic() - started, 1)
+        _write_status(job_dir, "complete", elapsed_seconds=elapsed)
+        _log(f"job {job_id}: complete in {elapsed:.1f}s")
 
 
 def _write_status(job_dir: Path, status: str, **extra: object) -> None:
@@ -135,3 +146,8 @@ def _file_response(job_id: str, filename: str, download_name: str, media_type: s
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"{download_name} not found")
     return FileResponse(path, filename=download_name, media_type=media_type)
+
+
+def _log(message: str) -> None:
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[api] {timestamp} {message}", flush=True)

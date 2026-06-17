@@ -31,8 +31,9 @@ start_reconviagen_worker() {
   (
     cd "${SERVER_DIR}"
     exec venv_run "${RECONVIAGEN_ENV_DIR}" env \
+      PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}" \
       PYTHONPATH="${SERVER_DIR}:${PYTHONPATH:-}" \
-      python -m workers.reconviagen.main \
+      python -u -m workers.reconviagen.main \
       --host "${RECONVIAGEN_WORKER_HOST}" \
       --port "${RECONVIAGEN_WORKER_PORT}"
   ) > >(sed -u 's/^/[worker-reconviagen] /' | tee -a "${RECONVIAGEN_WORKER_LOG}") 2>&1 &

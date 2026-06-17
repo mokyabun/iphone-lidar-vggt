@@ -7,6 +7,7 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -20,9 +21,11 @@ def generate_mesh(input_dir: Path, output_path: Path) -> None:
     cfg = settings()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if env_bool("RECONVIAGEN_MOCK", False):
+        _log(f"mock mesh generation: output_path={output_path}")
         _write_mock_mesh(output_path)
         return
     if cfg.reconviagen_worker_url:
+        _log(f"using ReconViaGen worker: url={cfg.reconviagen_worker_url} input_dir={input_dir} output_path={output_path}")
         _generate_with_worker(cfg.reconviagen_worker_url, input_dir, output_path)
         return
     if not cfg.reconviagen_command:
@@ -34,6 +37,7 @@ def generate_mesh(input_dir: Path, output_path: Path) -> None:
         input_dir=str(input_dir),
         output_path=str(output_path),
     )
+    _log(f"running ReconViaGen command: {command}")
     subprocess.run(
         shlex.split(command),
         check=True,
@@ -93,25 +97,33 @@ def align_reconviagen_mesh(
 def _generate_with_worker(worker_url: str, input_dir: Path, output_path: Path) -> None:
     body = json.dumps({"input_dir": str(input_dir), "output_path": str(output_path)}).encode()
     deadline = time.monotonic() + settings().reconviagen_timeout_seconds
+    attempt = 0
     while True:
+        attempt += 1
         request = urllib.request.Request(
             worker_url.rstrip("/") + "/generate",
             data=body,
             headers={"Content-Type": "application/json"},
             method="POST",
         )
+        remaining = max(1, int(deadline - time.monotonic()))
+        _log(f"worker request attempt={attempt} timeout_seconds={remaining}")
         try:
-            with urllib.request.urlopen(request, timeout=max(1, int(deadline - time.monotonic()))) as response:
+            started = time.monotonic()
+            with urllib.request.urlopen(request, timeout=remaining) as response:
                 result = json.loads(response.read())
+            _log(f"worker response received in {time.monotonic() - started:.1f}s result={result}")
             if result.get("status") != "ok" or not output_path.exists():
                 raise RuntimeError(result.get("error") or "ReconViaGen worker did not write a mesh.")
             return
         except urllib.error.HTTPError as exc:
             payload = exc.read().decode(errors="ignore")
+            _log(f"worker HTTP failure: status={exc.code} payload={payload}")
             raise RuntimeError(f"ReconViaGen worker failed: {payload}") from exc
         except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
             if time.monotonic() >= deadline:
                 raise RuntimeError(f"ReconViaGen worker request timed out: {exc}") from exc
+            _log(f"worker unavailable, retrying in 5s: {exc}")
             time.sleep(5)
 
 
@@ -276,3 +288,8 @@ def _clean_mesh(mesh: trimesh.Trimesh) -> None:
 def _write_mock_mesh(output_path: Path) -> None:
     mesh = trimesh.creation.icosphere(subdivisions=2, radius=0.5)
     mesh.export(output_path, file_type="glb")
+
+
+def _log(message: str) -> None:
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[reconviagen-client] {timestamp} {message}", flush=True)

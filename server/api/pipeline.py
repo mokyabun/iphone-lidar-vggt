@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import time
+from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -15,34 +18,47 @@ from .scan_io import extracted_scan_package, read_confidence, read_depth, read_f
 
 
 def reconstruct_scan(package_path: Path, output_dir: Path) -> ReconstructionResult:
+    started = time.monotonic()
     cfg = settings()
     output_dir.mkdir(parents=True, exist_ok=True)
     warnings: list[str] = []
+    _log(f"reconstruction started: package={package_path} output_dir={output_dir}")
     with extracted_scan_package(package_path) as root:
-        frames = read_frames(root)
+        with _timed("read scan package"):
+            frames = read_frames(root)
         if not frames:
             raise RuntimeError("Scan package did not contain frames.")
         selected = [frames[index] for index in keyframe_indices(len(frames), cfg.max_frames)]
-        masks = {frame.frame_id: central_object_mask(read_depth(root, frame)) for frame in selected}
-        object_points, object_colors, scene_points = _build_lidar_reference(root, selected, masks)
+        _log(f"frames: total={len(frames)} selected={len(selected)} max_frames={cfg.max_frames}")
+        with _timed("build object masks"):
+            masks = {frame.frame_id: central_object_mask(read_depth(root, frame)) for frame in selected}
+        with _timed("build LiDAR reference cloud"):
+            object_points, object_colors, scene_points = _build_lidar_reference(root, selected, masks)
+        _log(f"LiDAR points: object={object_points.shape[0]} scene={scene_points.shape[0]}")
         if object_points.shape[0] < 80:
             raise RuntimeError("Not enough LiDAR object points for metric scale alignment.")
 
         lidar_output = output_dir / "lidar_reference.ply"
-        write_point_cloud_ply(lidar_output, object_points, object_colors)
+        with _timed("write LiDAR reference PLY"):
+            write_point_cloud_ply(lidar_output, object_points, object_colors)
         input_dir = output_dir / "reconviagen_input"
-        input_views, mask_warning = _prepare_reconviagen_input(root, selected, masks, object_points, input_dir)
+        with _timed("prepare ReconViaGen input views"):
+            input_views, mask_warning = _prepare_reconviagen_input(root, selected, masks, object_points, input_dir)
+        _log(f"ReconViaGen input views: count={len(input_views)} dir={input_dir}")
         if not input_views:
             raise RuntimeError("No usable views were available for ReconViaGen.")
         if mask_warning:
             warnings.append(mask_warning)
+            _log(f"warning: {mask_warning}")
 
         raw_mesh = output_dir / "reconviagen_raw.glb"
         final_ply = output_dir / "reconviagen_metric.ply"
         preview_glb = output_dir / "reconviagen_metric.glb"
         print_stl = output_dir / "reconviagen_metric_print_mm.stl"
-        generate_mesh(input_dir, raw_mesh)
-        mesh_metrics = align_reconviagen_mesh(raw_mesh, final_ply, preview_glb, print_stl, object_points)
+        with _timed("generate ReconViaGen mesh"):
+            generate_mesh(input_dir, raw_mesh)
+        with _timed("align ReconViaGen mesh to LiDAR"):
+            mesh_metrics = align_reconviagen_mesh(raw_mesh, final_ply, preview_glb, print_stl, object_points)
 
     object_min, object_max, object_extent = bounds(object_points)
     scene_min, scene_max, scene_extent = bounds(scene_points)
@@ -66,7 +82,9 @@ def reconstruct_scan(package_path: Path, output_dir: Path) -> ReconstructionResu
         "warnings": warnings,
         **mesh_metrics,
     }
-    write_json(output_dir / "metrics.json", metrics)
+    with _timed("write metrics"):
+        write_json(output_dir / "metrics.json", metrics)
+    _log(f"reconstruction complete in {time.monotonic() - started:.1f}s final_output={final_ply}")
     return ReconstructionResult(
         final_output=final_ply,
         preview_glb_output=preview_glb,
@@ -276,3 +294,18 @@ def _crop_rgba(image: np.ndarray, mask: np.ndarray) -> np.ndarray:
     rgba[target_y0:target_y1, target_x0:target_x1, :3] = image[source_y0:source_y1, source_x0:source_x1]
     rgba[target_y0:target_y1, target_x0:target_x1, 3] = mask[source_y0:source_y1, source_x0:source_x1].astype(np.uint8) * 255
     return rgba
+
+
+def _log(message: str) -> None:
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[pipeline] {timestamp} {message}", flush=True)
+
+
+@contextmanager
+def _timed(label: str):
+    _log(f"{label}: start")
+    started = time.monotonic()
+    try:
+        yield
+    finally:
+        _log(f"{label}: done in {time.monotonic() - started:.1f}s")

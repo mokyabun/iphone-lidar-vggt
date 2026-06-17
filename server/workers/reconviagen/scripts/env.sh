@@ -34,16 +34,54 @@ install_reconviagen_requirements() {
     )
   else
     uv pip install --python "${python_bin}" -r "${requirements_file}"
+    if should_update_envs; then
+      LOG_PREFIX="worker-reconviagen-env" log "Force-reinstalling PyTorch CUDA packages for ${RECONVIAGEN_ENV_NAME}."
+      uv pip install --python "${python_bin}" \
+        --reinstall-package torch \
+        --reinstall-package torchvision \
+        --reinstall-package torchaudio \
+        --index-url https://download.pytorch.org/whl/cu121 \
+        torch==2.4.0 torchvision==0.19.0 torchaudio==2.4.0
+    fi
   fi
 }
 
 verify_reconviagen_torch() {
   LOG_PREFIX="prepare-reconviagen" log "Checking PyTorch in ${RECONVIAGEN_ENV_NAME}."
-  venv_run "${RECONVIAGEN_ENV_DIR}" python - <<'PY'
+  venv_run "${RECONVIAGEN_ENV_DIR}" env RECONVIAGEN_REQUIRE_CUDA="${RECONVIAGEN_REQUIRE_CUDA:-1}" python - <<'PY'
+import os
+import shutil
+import subprocess
+
 import torch
 
-print(f"[prepare-reconviagen] torch={torch.__version__} cuda={torch.version.cuda} available={torch.cuda.is_available()}")
+require_cuda = os.environ.get("RECONVIAGEN_REQUIRE_CUDA", "1").lower() not in {"0", "false", "no", "off"}
+print(
+    "[prepare-reconviagen] "
+    f"torch={torch.__version__} cuda_build={torch.version.cuda} available={torch.cuda.is_available()} "
+    f"device_count={torch.cuda.device_count()} CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES', '<unset>')}"
+)
 if not torch.__version__.startswith("2.4."):
     raise SystemExit("[prepare-reconviagen] ReconViaGen v0.5 CUDA extensions require PyTorch 2.4.x.")
+if require_cuda and not torch.cuda.is_available():
+    if torch.version.cuda is None:
+        print("[prepare-reconviagen] diagnostic: installed torch build is CPU-only.")
+    nvidia_smi = shutil.which("nvidia-smi")
+    if nvidia_smi:
+        result = subprocess.run(
+            [nvidia_smi, "--query-gpu=index,name,driver_version,memory.total,memory.used", "--format=csv,noheader"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        print(f"[prepare-reconviagen] nvidia-smi returncode={result.returncode} output={(result.stdout or result.stderr).strip() or '<empty>'}")
+    else:
+        print("[prepare-reconviagen] nvidia-smi not found in PATH.")
+    raise SystemExit(
+        "[prepare-reconviagen] CUDA is required but unavailable. "
+        "If this venv was created with CPU-only torch, rerun with APP_UPDATE_ENVS=1; "
+        "otherwise check GPU/container driver visibility."
+    )
 PY
 }

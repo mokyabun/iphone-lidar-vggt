@@ -8,6 +8,7 @@ export SERVER_DIR
 export APP_DIR
 export APP_HOST="${APP_HOST:-0.0.0.0}"
 export APP_PORT="${APP_PORT:-8000}"
+export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
 export APP_ENV_NAME="${APP_ENV_NAME:-api}"
 export APP_PYTHON_VERSION="${APP_PYTHON_VERSION:-3.11}"
 export APP_CACHE_ROOT="${APP_CACHE_ROOT:-/workspace/cache}"
@@ -45,5 +46,6 @@ trap stop_reconviagen_worker EXIT INT TERM
 LOG_PREFIX="run.sh" log "Starting API on ${APP_HOST}:${APP_PORT}."
 cd "${SERVER_DIR}"
 venv_run "${APP_ENV_DIR}" env \
+  PYTHONUNBUFFERED="${PYTHONUNBUFFERED}" \
   PYTHONPATH="${SERVER_DIR}:${PYTHONPATH:-}" \
-  python -m uvicorn api.api:app --host "${APP_HOST}" --port "${APP_PORT}"
+  python -u -m uvicorn api.api:app --host "${APP_HOST}" --port "${APP_PORT}" --log-level info

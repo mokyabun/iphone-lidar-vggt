@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import gc
+import os
+import shutil
+import subprocess
 import sys
 import time
 from contextlib import contextmanager
@@ -42,9 +45,14 @@ class ReconViaGenService:
             except RuntimeError:
                 pass
             _log(f"torch threads: intra_op={torch.get_num_threads()} inter_op={torch.get_num_interop_threads()}")
-        _log(f"torch: version={torch.__version__} cuda={torch.version.cuda} available={torch.cuda.is_available()}")
-        if torch.cuda.is_available():
-            _log(f"cuda device: {torch.cuda.get_device_name(0)}")
+        _log_cuda_diagnostics(torch)
+        if settings.require_cuda and not torch.cuda.is_available():
+            raise RuntimeError(
+                "CUDA is required for ReconViaGen, but PyTorch cannot use it. "
+                "Check the worker log diagnostics above. Common causes: CPU-only torch in the reused venv, "
+                "no NVIDIA device exposed to the container, incompatible driver, or CUDA_VISIBLE_DEVICES hiding the GPU. "
+                "Set APP_UPDATE_ENVS=1 to reinstall dependencies if the venv was created with the wrong torch build."
+            )
 
         from trellis.pipelines import TrellisVGGTTo3DPipeline
         from trellis.pipelines.trellis_hybrid_pipeline import TrellisHybridPipeline
@@ -218,7 +226,8 @@ def _timed(label: str):
 
 def _settings_summary(settings: ReconViaGenSettings) -> str:
     return (
-        f"repo_dir={settings.repo_dir} low_vram={settings.low_vram} torch_num_threads={settings.torch_num_threads} "
+        f"repo_dir={settings.repo_dir} low_vram={settings.low_vram} require_cuda={settings.require_cuda} "
+        f"torch_num_threads={settings.torch_num_threads} "
         f"ss_model={settings.ss_model} trellis_model={settings.trellis_model} "
         f"pipeline_type={settings.pipeline_type} ss_source={settings.ss_source} "
         f"preprocess_image={settings.preprocess_image}"
@@ -227,11 +236,45 @@ def _settings_summary(settings: ReconViaGenSettings) -> str:
 
 def _log_cuda(torch, label: str) -> None:
     if not torch.cuda.is_available():
+        _log(f"{label}: cuda unavailable")
         return
     allocated = torch.cuda.memory_allocated() / (1024**3)
     reserved = torch.cuda.memory_reserved() / (1024**3)
     peak = torch.cuda.max_memory_allocated() / (1024**3)
     _log(f"{label}: cuda allocated={allocated:.2f}GiB reserved={reserved:.2f}GiB peak={peak:.2f}GiB")
+
+
+def _log_cuda_diagnostics(torch) -> None:
+    _log(
+        "torch: "
+        f"version={torch.__version__} cuda_build={torch.version.cuda} "
+        f"cuda_available={torch.cuda.is_available()} cuda_device_count={torch.cuda.device_count()} "
+        f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES', '<unset>')}"
+    )
+    if torch.version.cuda is None:
+        _log("torch diagnostic: installed PyTorch build is CPU-only.")
+    if torch.cuda.is_available():
+        for index in range(torch.cuda.device_count()):
+            capability = ".".join(str(part) for part in torch.cuda.get_device_capability(index))
+            _log(f"cuda device {index}: name={torch.cuda.get_device_name(index)} capability={capability}")
+        return
+    nvidia_smi = shutil.which("nvidia-smi")
+    if not nvidia_smi:
+        _log("nvidia-smi: not found in PATH")
+        return
+    try:
+        result = subprocess.run(
+            [nvidia_smi, "--query-gpu=index,name,driver_version,memory.total,memory.used", "--format=csv,noheader"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except Exception as exc:
+        _log(f"nvidia-smi: failed to run: {exc}")
+        return
+    output = (result.stdout or result.stderr).strip()
+    _log(f"nvidia-smi: returncode={result.returncode} output={output or '<empty>'}")
 
 
 def _image_summary(path: Path, image: object) -> str:
