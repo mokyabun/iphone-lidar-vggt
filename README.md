@@ -80,6 +80,9 @@ export APP_START_RECONVIAGEN=0
 export RECONVIAGEN_USE_SYSTEM_TORCH=1
 export RECONVIAGEN_REFRESH=1
 export RECONVIAGEN_TIMEOUT_SECONDS=2400
+export RECONVIAGEN_CUMESH_URL=https://huggingface.co/spaces/microsoft/TRELLIS.2/resolve/90d6619f8152991009e68a6bdf6217a8cb7d8bb3/wheels/cumesh-0.0.1-cp310-cp310-linux_x86_64.whl
+export RECONVIAGEN_FLEX_GEMM_URL=https://huggingface.co/spaces/microsoft/TRELLIS.2/resolve/90d6619f8152991009e68a6bdf6217a8cb7d8bb3/wheels/flex_gemm-0.0.1-cp310-cp310-linux_x86_64.whl
+export RECONVIAGEN_O_VOXEL_URL=https://huggingface.co/spaces/microsoft/TRELLIS.2/resolve/90d6619f8152991009e68a6bdf6217a8cb7d8bb3/wheels/o_voxel-0.0.1-cp310-cp310-linux_x86_64.whl
 ```
 
 Set `RECONVIAGEN_USE_SYSTEM_TORCH=1` only on images that already provide a compatible PyTorch 2.4.x install. The worker uv env will be created with system site-packages and skip installing `torch`, `torchvision`, and `torchaudio`.
@@ -115,6 +118,7 @@ export RECONVIAGEN_WORKER_URL='http://127.0.0.1:8011'
 Main endpoints:
 
 ```text
+GET  /                           static browser upload tester
 GET  /health
 GET  /capabilities
 POST /jobs                      multipart field: scan_package
@@ -127,6 +131,8 @@ POST /reconstruct               synchronous development endpoint
 ```
 
 The iOS app uses the asynchronous job flow. `POST /jobs` returns a queued job, `GET /jobs/{job_id}` reports `queued`, `processing`, `complete`, or `failed`, and `/result` returns the final metric PLY when complete.
+
+The backend also serves a small static tester at `http://127.0.0.1:8000/`. Use it to upload local scan packages such as `test/ScanPackage-*.zip` directly from a browser, watch job polling, and download the generated PLY/GLB/STL outputs.
 
 ## Smoke Test Mode
 

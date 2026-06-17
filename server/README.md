@@ -23,6 +23,8 @@ Existing envs under `${APP_CACHE_ROOT}/venvs` are reused by default to avoid rep
 
 If the base image already has compatible PyTorch 2.4.x packages, set `RECONVIAGEN_USE_SYSTEM_TORCH=1` before the worker env is first created. The uv env will use system site-packages and skip the pinned `torch`, `torchvision`, and `torchaudio` entries from `workers/reconviagen/requirements.txt`.
 
+The TRELLIS.2 postprocessor packages default to prebuilt CPython 3.10 Linux wheels from the Microsoft TRELLIS.2 Hugging Face Space. Override `RECONVIAGEN_CUMESH_URL`, `RECONVIAGEN_FLEX_GEMM_URL`, or `RECONVIAGEN_O_VOXEL_URL` only when you need to build from another source.
+
 ## ReconViaGen Worker
 
 Default behavior:
@@ -73,3 +75,5 @@ RECONVIAGEN_MOCK=1 ./run.sh
 ```
 
 This bypasses the generator and writes a synthetic GLB so API, scan parsing, and alignment code can be tested without GPU dependencies.
+
+Open `http://127.0.0.1:8000/` while the API is running to use the browser upload tester. It accepts local `ScanPackage.zip` files, including packages under the repository `test/` directory, and polls the async `/jobs` flow.

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LiDAR Scan Tester</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="panel upload-panel" aria-labelledby="title">
+        <div class="title-row">
+          <div>
+            <p class="eyebrow">ReconViaGen API</p>
+            <h1 id="title">LiDAR Scan Tester</h1>
+          </div>
+          <span id="capabilityBadge" class="badge">Checking</span>
+        </div>
+
+        <form id="uploadForm" class="upload-form">
+          <label id="dropZone" class="drop-zone" for="scanPackage">
+            <span class="drop-title">ScanPackage.zip</span>
+            <span id="fileName" class="drop-detail">Choose or drop a zip file</span>
+            <input id="scanPackage" name="scan_package" type="file" accept=".zip,application/zip" />
+          </label>
+
+          <div class="actions">
+            <button id="submitButton" type="submit">Start Job</button>
+            <button id="resetButton" type="button" class="secondary">Reset</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel status-panel" aria-labelledby="statusTitle">
+        <div class="section-header">
+          <h2 id="statusTitle">Status</h2>
+          <span id="jobId" class="job-id">No job</span>
+        </div>
+
+        <div class="status-card">
+          <div id="stateText" class="state-text">Idle</div>
+          <div class="progress-track" aria-hidden="true">
+            <span id="progressBar" class="progress-bar"></span>
+          </div>
+        </div>
+
+        <div id="downloads" class="downloads" hidden>
+          <a id="resultLink" href="#">PLY</a>
+          <a id="previewLink" href="#">GLB</a>
+          <a id="printLink" href="#">STL</a>
+          <a id="lidarLink" href="#">LiDAR PLY</a>
+        </div>
+
+        <pre id="details" class="details" aria-live="polite"></pre>
+      </section>
+    </main>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

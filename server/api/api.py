@@ -9,8 +9,9 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
-from .config import settings
+from .config import env_bool, settings
 from .pipeline import reconstruct_scan
 
 app = FastAPI(title="ReconViaGen LiDAR Scale API")
@@ -25,7 +26,7 @@ def health() -> dict[str, str]:
 @app.get("/capabilities")
 def capabilities() -> dict[str, object]:
     cfg = settings()
-    configured = bool(cfg.reconviagen_command or cfg.reconviagen_worker_url)
+    configured = bool(cfg.reconviagen_command or cfg.reconviagen_worker_url or env_bool("RECONVIAGEN_MOCK", False))
     return {
         "pipeline": "reconviagen_lidar_scale",
         "state": "available" if configured else "unavailable",
@@ -90,6 +91,11 @@ def get_print(job_id: str) -> FileResponse:
 @app.get("/jobs/{job_id}/lidar")
 def get_lidar_reference(job_id: str) -> FileResponse:
     return _file_response(job_id, "lidar_reference.ply", "lidar_reference.ply", "application/octet-stream")
+
+
+STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
+if STATIC_DIR.exists():
+    app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
 
 
 def _store_upload(scan_package: UploadFile) -> tuple[str, Path, Path]:

@@ -17,4 +17,5 @@ build/
 Dockerfile.*
 docker-compose.*.yml
 
-scripts
+/scripts
+/test
