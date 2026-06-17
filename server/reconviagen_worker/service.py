@@ -2,14 +2,20 @@ from __future__ import annotations
 
 import gc
 import sys
+import time
+from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 
-from .settings import reconviagen_settings
+from .settings import ReconViaGenSettings, reconviagen_settings
 
 
 class ReconViaGenService:
     def __init__(self) -> None:
+        started = time.perf_counter()
         settings = reconviagen_settings()
+        _log("initializing ReconViaGen worker")
+        _log(f"settings: {_settings_summary(settings)}")
         repo_dir = settings.repo_dir.expanduser()
         vendor_dirs = [
             repo_dir,
@@ -20,116 +26,228 @@ class ReconViaGenService:
         ]
         for vendor_dir in reversed(vendor_dirs):
             sys.path.insert(0, str(vendor_dir))
+        missing_vendor_dirs = [str(path) for path in vendor_dirs if not path.exists()]
+        if missing_vendor_dirs:
+            _log(f"warning: missing ReconViaGen vendor dirs: {missing_vendor_dirs}")
 
         import torch
+
+        if settings.torch_num_threads > 0:
+            torch.set_num_threads(settings.torch_num_threads)
+            try:
+                torch.set_num_interop_threads(max(1, min(settings.torch_num_threads, 4)))
+            except RuntimeError:
+                pass
+            _log(f"torch threads: intra_op={torch.get_num_threads()} inter_op={torch.get_num_interop_threads()}")
+        _log(f"torch: version={torch.__version__} cuda={torch.version.cuda} available={torch.cuda.is_available()}")
+        if torch.cuda.is_available():
+            _log(f"cuda device: {torch.cuda.get_device_name(0)}")
+
         from trellis.pipelines import TrellisVGGTTo3DPipeline
         from trellis.pipelines.trellis_hybrid_pipeline import TrellisHybridPipeline
         from trellis2.pipelines import Trellis2ImageTo3DPipeline
 
         self.torch = torch
         low_vram = settings.low_vram
-        print("[reconviagen] loading sparse-structure pipeline", flush=True)
-        vggt_pipeline = TrellisVGGTTo3DPipeline.from_pretrained(settings.ss_model)
-        vggt_pipeline.cuda()
-        vggt_pipeline.VGGT_model.cuda()
-        vggt_pipeline.birefnet_model.cuda()
+        with _timed("load sparse-structure pipeline"):
+            vggt_pipeline = TrellisVGGTTo3DPipeline.from_pretrained(settings.ss_model)
+        with _timed("move sparse-structure pipeline to cuda"):
+            vggt_pipeline.cuda()
+            vggt_pipeline.VGGT_model.cuda()
+            vggt_pipeline.birefnet_model.cuda()
+        _log_cuda(torch, "after sparse-structure cuda")
         if "slat_decoder_gs" in vggt_pipeline.models:
             del vggt_pipeline.models["slat_decoder_gs"]
+            _log("removed unused slat_decoder_gs model")
         if low_vram:
-            vggt_pipeline.VGGT_model.cpu()
-            for model in vggt_pipeline.models.values():
-                model.cpu()
-            gc.collect()
-            torch.cuda.empty_cache()
+            with _timed("offload sparse-structure pipeline for low_vram"):
+                vggt_pipeline.VGGT_model.cpu()
+                for model in vggt_pipeline.models.values():
+                    model.cpu()
+                gc.collect()
+                torch.cuda.empty_cache()
+            _log_cuda(torch, "after sparse-structure offload")
 
-        print("[reconviagen] loading TRELLIS.2 pipeline", flush=True)
-        trellis2_pipeline = Trellis2ImageTo3DPipeline.from_pretrained(settings.trellis_model)
-        trellis2_pipeline.cuda()
+        with _timed("resolve TRELLIS.2 model snapshot"):
+            trellis_model = _snapshot_path(settings.trellis_model)
+        _log(f"TRELLIS.2 model path: {trellis_model}")
+        with _timed("load TRELLIS.2 pipeline"):
+            trellis2_pipeline = Trellis2ImageTo3DPipeline.from_pretrained(str(trellis_model))
         trellis2_pipeline.low_vram = low_vram
+        with _timed("move TRELLIS.2 pipeline to cuda"):
+            trellis2_pipeline.cuda()
+        _log_cuda(torch, "after TRELLIS.2 cuda")
         self.pipeline = TrellisHybridPipeline(vggt_pipeline, trellis2_pipeline, low_vram=low_vram)
-        print("[reconviagen] worker ready", flush=True)
+        _log(f"worker ready in {time.perf_counter() - started:.1f}s")
 
     def generate(self, input_dir: Path, output_path: Path) -> None:
         from PIL import Image
 
+        started = time.perf_counter()
+        settings = reconviagen_settings()
         image_paths = sorted(input_dir.glob("view_*.png"))
         if not image_paths:
             raise RuntimeError("ReconViaGen input directory did not contain any views")
-        images = [Image.open(path).convert("RGBA") for path in image_paths]
-        params = _sampler_params()
-        print(f"[reconviagen] reconstructing {len(images)} views", flush=True)
-        meshes, latents = self.pipeline.run_multi_image(
-            images,
-            strategy="adaptive_guidance_weight",
-            seed=reconviagen_settings().seed,
-            ss_sampler_params=params["ss"],
-            slat_sampler_params=params["slat"],
-            shape_slat_sampler_params=params["shape"],
-            tex_slat_sampler_params=params["texture"],
-            pipeline_type=reconviagen_settings().pipeline_type,
-            preprocess_image=True,
-            return_latent=True,
-            ss_source=reconviagen_settings().ss_source,
+        _log(f"generation requested: input_dir={input_dir} output_path={output_path}")
+        _log(
+            "run config: "
+            f"views={len(image_paths)} pipeline_type={settings.pipeline_type} ss_source={settings.ss_source} "
+            f"preprocess_image={settings.preprocess_image} max_num_tokens={settings.max_num_tokens}"
         )
+        with _timed("load input views"):
+            images = [Image.open(path).convert("RGBA") for path in image_paths]
+        _log(f"input view sizes: {[_image_summary(path, image) for path, image in zip(image_paths, images)]}")
+        params = _sampler_params(settings)
+        _log(f"sampler params: {params}")
+        _log_cuda(self.torch, "before reconstruction")
+        with _timed("run ReconViaGen hybrid pipeline"):
+            meshes, latents = self.pipeline.run_multi_image(
+                images,
+                strategy="adaptive_guidance_weight",
+                seed=settings.seed,
+                ss_sampler_params=params["ss"],
+                slat_sampler_params=params["slat"],
+                shape_slat_sampler_params=params["shape"],
+                tex_slat_sampler_params=params["texture"],
+                pipeline_type=settings.pipeline_type,
+                preprocess_image=settings.preprocess_image,
+                return_latent=True,
+                ss_source=settings.ss_source,
+                max_num_tokens=settings.max_num_tokens,
+            )
+        _log_cuda(self.torch, "after reconstruction")
         mesh = meshes[0]
+        _log(f"mesh generated: {_mesh_summary(mesh)} latent_resolution={latents[2]}")
         output_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             import o_voxel
 
             resolution = latents[2]
-            glb = o_voxel.postprocess.to_glb(
-                vertices=mesh.vertices,
-                faces=mesh.faces,
-                attr_volume=mesh.attrs,
-                coords=mesh.coords,
-                attr_layout=self.pipeline.pbr_attr_layout,
-                grid_size=resolution,
-                aabb=[[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]],
-                decimation_target=reconviagen_settings().decimation_target,
-                texture_size=reconviagen_settings().texture_size,
-                remesh=True,
-                remesh_band=1,
-                remesh_project=0,
-                use_tqdm=True,
+            _log(
+                "postprocess to textured GLB: "
+                f"resolution={resolution} decimation_target={settings.decimation_target} "
+                f"texture_size={settings.texture_size}"
             )
-            glb.export(output_path, extension_webp=True)
+            with _timed("o_voxel textured postprocess"):
+                glb = o_voxel.postprocess.to_glb(
+                    vertices=mesh.vertices,
+                    faces=mesh.faces,
+                    attr_volume=mesh.attrs,
+                    coords=mesh.coords,
+                    attr_layout=self.pipeline.pbr_attr_layout,
+                    grid_size=resolution,
+                    aabb=[[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]],
+                    decimation_target=settings.decimation_target,
+                    texture_size=settings.texture_size,
+                    remesh=True,
+                    remesh_band=1,
+                    remesh_project=0,
+                    use_tqdm=True,
+                )
+            with _timed("export textured GLB"):
+                glb.export(output_path, extension_webp=True)
         except Exception as exc:
-            print(f"[reconviagen] textured postprocess failed: {exc}", flush=True)
-            print("[reconviagen] exporting raw geometry fallback", flush=True)
-            _export_raw_mesh(mesh, output_path)
+            _log(f"textured postprocess failed: {exc}")
+            _log("exporting raw geometry fallback")
+            with _timed("export raw geometry GLB"):
+                _export_raw_mesh(mesh, output_path)
         self.torch.cuda.empty_cache()
-        print(f"[reconviagen] wrote {output_path}", flush=True)
+        _log_cuda(self.torch, "after cuda cache clear")
+        size = output_path.stat().st_size if output_path.exists() else 0
+        _log(f"wrote {output_path} ({size} bytes) in {time.perf_counter() - started:.1f}s")
 
 
-def _sampler_params() -> dict[str, dict[str, object]]:
+def _sampler_params(settings: ReconViaGenSettings) -> dict[str, dict[str, object]]:
     return {
         "ss": {
-            "steps": reconviagen_settings().ss_steps,
-            "cfg_strength": reconviagen_settings().ss_guidance,
+            "steps": settings.ss_steps,
+            "cfg_strength": settings.ss_guidance,
             "cfg_interval": [0.6, 1.0],
             "guidance_rescale": 0.7,
             "rescale_t": 5.0,
         },
         "slat": {
-            "steps": reconviagen_settings().slat_steps,
-            "cfg_strength": reconviagen_settings().slat_guidance,
+            "steps": settings.slat_steps,
+            "cfg_strength": settings.slat_guidance,
             "cfg_interval": [0.6, 1.0],
             "guidance_rescale": 0.5,
             "rescale_t": 3.0,
         },
         "shape": {
-            "steps": reconviagen_settings().shape_steps,
-            "guidance_strength": reconviagen_settings().shape_guidance,
+            "steps": settings.shape_steps,
+            "guidance_strength": settings.shape_guidance,
             "guidance_rescale": 0.5,
             "rescale_t": 3.0,
         },
         "texture": {
-            "steps": reconviagen_settings().texture_steps,
-            "guidance_strength": reconviagen_settings().texture_guidance,
+            "steps": settings.texture_steps,
+            "guidance_strength": settings.texture_guidance,
             "guidance_rescale": 0.0,
             "rescale_t": 3.0,
         },
     }
+
+
+def _snapshot_path(model: str) -> Path | str:
+    path = Path(model).expanduser()
+    if path.exists():
+        return path
+
+    from huggingface_hub import snapshot_download
+
+    return Path(snapshot_download(model))
+
+
+def _log(message: str) -> None:
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[reconviagen] {timestamp} {message}", flush=True)
+
+
+@contextmanager
+def _timed(label: str):
+    _log(f"{label}: start")
+    started = time.perf_counter()
+    try:
+        yield
+    finally:
+        _log(f"{label}: done in {time.perf_counter() - started:.1f}s")
+
+
+def _settings_summary(settings: ReconViaGenSettings) -> str:
+    return (
+        f"repo_dir={settings.repo_dir} low_vram={settings.low_vram} torch_num_threads={settings.torch_num_threads} "
+        f"ss_model={settings.ss_model} trellis_model={settings.trellis_model} "
+        f"pipeline_type={settings.pipeline_type} ss_source={settings.ss_source} "
+        f"preprocess_image={settings.preprocess_image}"
+    )
+
+
+def _log_cuda(torch, label: str) -> None:
+    if not torch.cuda.is_available():
+        return
+    allocated = torch.cuda.memory_allocated() / (1024**3)
+    reserved = torch.cuda.memory_reserved() / (1024**3)
+    peak = torch.cuda.max_memory_allocated() / (1024**3)
+    _log(f"{label}: cuda allocated={allocated:.2f}GiB reserved={reserved:.2f}GiB peak={peak:.2f}GiB")
+
+
+def _image_summary(path: Path, image: object) -> str:
+    return f"{path.name}:{image.width}x{image.height}/{image.mode}"
+
+
+def _mesh_summary(mesh: object) -> str:
+    vertices = getattr(mesh, "vertices", None)
+    faces = getattr(mesh, "faces", None)
+    coords = getattr(mesh, "coords", None)
+    attrs = getattr(mesh, "attrs", None)
+    return (
+        f"vertices={_shape(vertices)} faces={_shape(faces)} "
+        f"coords={_shape(coords)} attrs={_shape(attrs)}"
+    )
+
+
+def _shape(value: object) -> object:
+    return getattr(value, "shape", None)
 
 
 def _export_raw_mesh(mesh: object, output_path: Path) -> None:

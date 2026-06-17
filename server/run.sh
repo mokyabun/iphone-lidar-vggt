@@ -8,6 +8,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 APP_CACHE_ROOT="${APP_CACHE_ROOT:-/workspace/cache}"
 export MAMBA_ROOT_PREFIX="${MAMBA_ROOT_PREFIX:-/workspace/micromamba}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-${APP_CACHE_ROOT}/xdg}"
+export HF_HOME="${HF_HOME:-${APP_CACHE_ROOT}/huggingface}"
+export HF_HUB_CACHE="${HF_HUB_CACHE:-${HF_HOME}/hub}"
+export TORCH_HOME="${TORCH_HOME:-${APP_CACHE_ROOT}/torch}"
+if [ -n "${HF_TOKEN:-}" ] && [ -z "${HUGGINGFACE_HUB_TOKEN:-}" ]; then
+  export HUGGINGFACE_HUB_TOKEN="${HF_TOKEN}"
+fi
 
 APP_PREPARE_RECONVIAGEN="${APP_PREPARE_RECONVIAGEN:-1}"
 APP_START_RECONVIAGEN="${APP_START_RECONVIAGEN:-1}"
@@ -82,13 +89,13 @@ start_reconviagen_worker() {
   export RECONVIAGEN_WORKER_URL="http://${RECONVIAGEN_WORKER_HOST}:${RECONVIAGEN_WORKER_PORT}"
   export RECONVIAGEN_REPO_DIR
   mkdir -p "$(dirname "${RECONVIAGEN_WORKER_LOG}")"
-  log "Starting ReconViaGen worker on ${RECONVIAGEN_WORKER_URL}."
+  log "Starting ReconViaGen worker on ${RECONVIAGEN_WORKER_URL}; logging to ${RECONVIAGEN_WORKER_LOG}."
   (
     cd "${SCRIPT_DIR}"
     exec micromamba run -n "${RECONVIAGEN_ENV_NAME}" python -m reconviagen_worker.main \
       --host "${RECONVIAGEN_WORKER_HOST}" \
       --port "${RECONVIAGEN_WORKER_PORT}"
-  ) >>"${RECONVIAGEN_WORKER_LOG}" 2>&1 &
+  ) > >(sed -u 's/^/[reconviagen-worker] /' | tee -a "${RECONVIAGEN_WORKER_LOG}") 2>&1 &
   RECONVIAGEN_WORKER_PID="$!"
 }
 

@@ -13,7 +13,7 @@ RECONVIAGEN_ENV_NAME="${RECONVIAGEN_ENV_NAME:-reconviagen-v05}"
 RECONVIAGEN_CUDA_FLAGS="${RECONVIAGEN_CUDA_FLAGS:---xformers --flash-attn --nvdiffrec --spconv --kaolin --nvdiffrast}"
 RECONVIAGEN_CUMESH_URL="${RECONVIAGEN_CUMESH_URL:-git+https://github.com/JeffreyXiang/CuMesh.git@12289e1062f0603f2f0d0771b02e1395d247f26f}"
 RECONVIAGEN_FLEX_GEMM_URL="${RECONVIAGEN_FLEX_GEMM_URL:-git+https://github.com/JeffreyXiang/FlexGEMM.git@6dd94a859c26ee8246888502eada3dd8ad85532e}"
-RECONVIAGEN_INSTALL_POSTPROCESSORS="${RECONVIAGEN_INSTALL_POSTPROCESSORS:-0}"
+RECONVIAGEN_INSTALL_POSTPROCESSORS="${RECONVIAGEN_INSTALL_POSTPROCESSORS:-1}"
 RECONVIAGEN_REFRESH="${RECONVIAGEN_REFRESH:-0}"
 
 log() {
@@ -80,18 +80,34 @@ PY
 }
 
 install_base_packages() {
-  # We install base Python packages directly instead of via setup.sh --basic
-  # because setup.sh pins huggingface_hub==0.33.4 alongside transformers==5.3.0,
-  # and those two pinned versions have conflicting sub-dependencies.
-  # Using unpinned versions (except kornia) lets pip/conda pick compatible ones.
+  # Keep these aligned with ReconViaGen v0.5 setup.sh/setup_update.sh.
   log "Installing ReconViaGen base Python packages."
   micromamba run -n "${RECONVIAGEN_ENV_NAME}" python -m pip install --quiet \
-    imageio imageio-ffmpeg tqdm easydict opencv-python-headless scipy \
+    pillow imageio imageio-ffmpeg tqdm easydict opencv-python-headless scipy ninja \
     rembg onnxruntime open3d xatlas pyvista pymeshfix igraph lpips \
-    "kornia==0.8.2" zstandard rtree fast-simplification \
-    huggingface_hub transformers
+    "kornia==0.8.2" "huggingface_hub==0.36.2" "transformers==4.57.1"
+  micromamba run -n "${RECONVIAGEN_ENV_NAME}" python -m pip install --quiet \
+    zstandard pillow-simd rtree fast-simplification
   pip_install_if_missing utils3d \
     "git+https://github.com/EasternJournalist/utils3d.git@9a4eb15e4021b67b12c460c7057d642626897ec8"
+}
+
+verify_base_package_pins() {
+  log "Verifying ReconViaGen Python package pins."
+  micromamba run -n "${RECONVIAGEN_ENV_NAME}" python - <<'PY'
+from importlib.metadata import version
+
+expected = {
+    "huggingface-hub": "0.36.2",
+    "transformers": "4.57.1",
+    "kornia": "0.8.2",
+}
+for package, expected_version in expected.items():
+    installed = version(package)
+    print(f"[prepare_reconviagen] {package}={installed}")
+    if installed != expected_version:
+        raise SystemExit(f"[prepare_reconviagen] Expected {package}=={expected_version}, got {installed}.")
+PY
 }
 
 pip_install_if_missing() {
@@ -110,6 +126,61 @@ optional_pip_install_if_missing() {
   if ! pip_install_if_missing "${import_name}" "$@"; then
     log "Optional ${import_name} install failed; continuing with raw mesh export fallback."
   fi
+}
+
+patch_flex_gemm_triton_autotuner() {
+  micromamba run -n "${RECONVIAGEN_ENV_NAME}" python - <<'PY'
+from pathlib import Path
+import sysconfig
+
+path = Path(sysconfig.get_paths()["purelib"]) / "flex_gemm" / "utils" / "autotuner.py"
+if not path.exists():
+    raise SystemExit(0)
+
+text = path.read_text()
+if "autotuner_kwargs = dict(" in text:
+    raise SystemExit(0)
+
+old = """        super().__init__(
+            fn,
+            arg_names,
+            configs,
+            key,
+            reset_to_zero,
+            restore_value,
+            pre_hook,
+            post_hook,
+            prune_configs_by,
+            warmup,
+            rep,
+            use_cuda_graph,
+            do_bench,
+        )
+"""
+new = """        autotuner_kwargs = dict(
+            pre_hook=pre_hook,
+            post_hook=post_hook,
+            prune_configs_by=prune_configs_by,
+            warmup=warmup,
+            rep=rep,
+            use_cuda_graph=use_cuda_graph,
+        )
+        if "do_bench" in inspect.signature(triton.runtime.Autotuner.__init__).parameters:
+            autotuner_kwargs["do_bench"] = do_bench
+        super().__init__(
+            fn,
+            arg_names,
+            configs,
+            key,
+            reset_to_zero,
+            restore_value,
+            **autotuner_kwargs,
+        )
+"""
+if old not in text:
+    raise SystemExit("FlexGEMM autotuner layout changed; cannot patch Triton compatibility.")
+path.write_text(text.replace(old, new))
+PY
 }
 
 build_cuda_extensions() {
@@ -136,6 +207,7 @@ build_cuda_extensions() {
     if [ -d "${RECONVIAGEN_REPO_DIR}/wheels/TRELLIS.2/o-voxel" ]; then
       optional_pip_install_if_missing o_voxel "${RECONVIAGEN_REPO_DIR}/wheels/TRELLIS.2/o-voxel" --no-build-isolation --no-deps
     fi
+    patch_flex_gemm_triton_autotuner
   else
     log "Skipping optional postprocessors. Set RECONVIAGEN_INSTALL_POSTPROCESSORS=1 to try CuMesh/FlexGEMM/o-voxel."
   fi
@@ -158,5 +230,6 @@ sync_repo
 ensure_env
 verify_torch
 install_base_packages
+verify_base_package_pins
 build_cuda_extensions
 log "ReconViaGen is ready in micromamba env ${RECONVIAGEN_ENV_NAME}."

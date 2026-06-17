@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 import threading
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -44,11 +45,17 @@ def create_app(service: ReconViaGenService | None = None) -> FastAPI:
 
     @app.post("/generate", response_model=GenerateResponse)
     def generate(request: GenerateRequest) -> GenerateResponse:
+        started = time.perf_counter()
+        print(
+            f"[reconviagen] generate request: input_dir={request.input_dir} output_path={request.output_path}",
+            flush=True,
+        )
         try:
             get_service().generate(Path(request.input_dir), Path(request.output_path))
         except Exception as exc:
-            print(f"[reconviagen] generation failed: {exc}", flush=True)
+            print(f"[reconviagen] generation failed after {time.perf_counter() - started:.1f}s: {exc}", flush=True)
             raise HTTPException(status_code=500, detail=str(exc)) from exc
+        print(f"[reconviagen] generation succeeded in {time.perf_counter() - started:.1f}s", flush=True)
         return GenerateResponse(status="ok")
 
     return app
@@ -79,4 +86,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
