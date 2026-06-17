@@ -21,6 +21,8 @@ This server keeps the app layer thin while still managing a local ReconViaGen wo
 
 Existing envs under `${APP_CACHE_ROOT}/venvs` are reused by default to avoid repeated dependency solving. Set `APP_UPDATE_ENVS=1` when you want to apply dependency file changes.
 
+If the base image already has compatible PyTorch 2.4.x packages, set `RECONVIAGEN_USE_SYSTEM_TORCH=1` before the worker env is first created. The uv env will use system site-packages and skip the pinned `torch`, `torchvision`, and `torchaudio` entries from `workers/reconviagen/requirements.txt`.
+
 ## ReconViaGen Worker
 
 Default behavior:

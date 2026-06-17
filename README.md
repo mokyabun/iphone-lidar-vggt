@@ -77,9 +77,12 @@ ReconViaGen setup and worker control:
 ```bash
 export APP_PREPARE_RECONVIAGEN=0
 export APP_START_RECONVIAGEN=0
+export RECONVIAGEN_USE_SYSTEM_TORCH=1
 export RECONVIAGEN_REFRESH=1
 export RECONVIAGEN_TIMEOUT_SECONDS=2400
 ```
+
+Set `RECONVIAGEN_USE_SYSTEM_TORCH=1` only on images that already provide a compatible PyTorch 2.4.x install. The worker uv env will be created with system site-packages and skip installing `torch`, `torchvision`, and `torchaudio`.
 
 Scan processing and alignment:
 
