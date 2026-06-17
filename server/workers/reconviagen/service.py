@@ -6,7 +6,9 @@ import resource
 import shutil
 import subprocess
 import sys
+import threading
 import time
+import traceback
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -269,10 +271,42 @@ def _log_thread_diagnostics() -> None:
 def _timed(label: str):
     _log(f"{label}: start")
     started = time.perf_counter()
+    stop_heartbeat = threading.Event()
+    heartbeat = _start_heartbeat(label, started, stop_heartbeat)
     try:
         yield
     finally:
+        stop_heartbeat.set()
+        if heartbeat is not None:
+            heartbeat.join(timeout=1)
         _log(f"{label}: done in {time.perf_counter() - started:.1f}s")
+
+
+def _start_heartbeat(label: str, started: float, stop_event: threading.Event) -> threading.Thread | None:
+    settings = reconviagen_settings()
+    interval = settings.heartbeat_seconds
+    if interval <= 0:
+        return None
+
+    def run() -> None:
+        while not stop_event.wait(interval):
+            elapsed = time.perf_counter() - started
+            _log(f"{label}: still running after {elapsed:.1f}s")
+            _dump_thread_stacks(label)
+
+    thread = threading.Thread(target=run, name=f"heartbeat:{label}", daemon=True)
+    thread.start()
+    return thread
+
+
+def _dump_thread_stacks(label: str) -> None:
+    frames = sys._current_frames()
+    for thread in threading.enumerate():
+        frame = frames.get(thread.ident)
+        if frame is None:
+            continue
+        stack = "".join(traceback.format_stack(frame, limit=12)).rstrip()
+        _log(f"{label}: stack thread={thread.name} ident={thread.ident}\n{stack}")
 
 
 def _settings_summary(settings: ReconViaGenSettings) -> str:

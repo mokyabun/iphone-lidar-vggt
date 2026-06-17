@@ -33,6 +33,7 @@ exact_expected = {
     "kornia": "0.8.2",
 }
 minimum_expected = {
+    "timm": "0.9.16",
     "huggingface-hub": "0.34.0",
     "transformers": "4.56.0",
 }

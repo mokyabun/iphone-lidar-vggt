@@ -18,6 +18,7 @@ class ReconViaGenSettings(BaseSettings):
     low_vram: bool = Field(False, validation_alias="RECONVIAGEN_LOW_VRAM")
     require_cuda: bool = Field(True, validation_alias="RECONVIAGEN_REQUIRE_CUDA")
     torch_num_threads: int = Field(1, validation_alias="RECONVIAGEN_TORCH_NUM_THREADS")
+    heartbeat_seconds: int = Field(30, validation_alias="RECONVIAGEN_HEARTBEAT_SECONDS")
     ss_model: str = Field("Stable-X/trellis-vggt-v0-2", validation_alias="RECONVIAGEN_SS_MODEL")
     trellis_model: str = Field("microsoft/TRELLIS.2-4B", validation_alias="RECONVIAGEN_TRELLIS_MODEL")
     seed: int = Field(0, validation_alias="RECONVIAGEN_SEED")
