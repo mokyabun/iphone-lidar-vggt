@@ -13,7 +13,7 @@ torchaudio==2.4.0
 pillow==10.4.0
 imageio==2.36.1
 imageio-ffmpeg==0.5.1
-tqdm==4.67.1
+tqdm
 easydict==1.13
 opencv-python-headless==4.10.0.84
 scipy==1.14.1
