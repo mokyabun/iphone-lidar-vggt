@@ -7,6 +7,9 @@ reconviagen_cuda_runtime_stamp() {
     printf 'repo=%s\n' "$(reconviagen_repo_revision)"
     printf 'cuda_flags=%s\n' "${RECONVIAGEN_CUDA_FLAGS}"
     printf 'postprocessors=%s\n' "${RECONVIAGEN_INSTALL_POSTPROCESSORS}"
+    printf 'cumesh_url=%s\n' "${RECONVIAGEN_CUMESH_URL}"
+    printf 'flex_gemm_url=%s\n' "${RECONVIAGEN_FLEX_GEMM_URL}"
+    printf 'o_voxel_url=%s\n' "${RECONVIAGEN_O_VOXEL_URL}"
   } | cksum | awk '{print $1}'
 }
 
@@ -49,7 +52,9 @@ build_reconviagen_cuda_extensions() {
   if [ "${RECONVIAGEN_INSTALL_POSTPROCESSORS}" = "1" ]; then
     optional_pip_install_if_missing cumesh "${RECONVIAGEN_CUMESH_URL}" --no-build-isolation --no-deps
     optional_pip_install_if_missing flex_gemm "${RECONVIAGEN_FLEX_GEMM_URL}" --no-build-isolation --no-deps
-    if [ -d "${RECONVIAGEN_REPO_DIR}/wheels/TRELLIS.2/o-voxel" ]; then
+    if [ -n "${RECONVIAGEN_O_VOXEL_URL}" ]; then
+      optional_pip_install_if_missing o_voxel "${RECONVIAGEN_O_VOXEL_URL}" --no-build-isolation --no-deps
+    elif [ -d "${RECONVIAGEN_REPO_DIR}/wheels/TRELLIS.2/o-voxel" ]; then
       optional_pip_install_if_missing o_voxel "${RECONVIAGEN_REPO_DIR}/wheels/TRELLIS.2/o-voxel" --no-build-isolation --no-deps
     fi
     patch_flex_gemm_triton_autotuner
