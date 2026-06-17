@@ -11,8 +11,22 @@ log() {
 }
 
 env_exists() {
-  local env_name="$1"
-  micromamba env list | awk '{print $1}' | grep -qx "${env_name}"
+  local env_dir="$1"
+  [ -x "${env_dir}/bin/python" ]
+}
+
+venv_python() {
+  local env_dir="$1"
+  printf '%s/bin/python\n' "${env_dir}"
+}
+
+venv_run() {
+  local env_dir="$1"
+  shift
+  env \
+    VIRTUAL_ENV="${env_dir}" \
+    PATH="${env_dir}/bin:${PATH}" \
+    "$@"
 }
 
 should_update_envs() {

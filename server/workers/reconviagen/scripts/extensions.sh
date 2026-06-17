@@ -1,5 +1,5 @@
 reconviagen_cuda_stamp_file() {
-  echo "${MAMBA_ROOT_PREFIX}/envs/${RECONVIAGEN_ENV_NAME}/.reconviagen-cuda-stamp"
+  echo "${RECONVIAGEN_ENV_DIR}/.reconviagen-cuda-stamp"
 }
 
 reconviagen_cuda_runtime_stamp() {
@@ -11,9 +11,9 @@ reconviagen_cuda_runtime_stamp() {
 }
 
 show_reconviagen_ccache_stats() {
-  if micromamba run -n "${RECONVIAGEN_ENV_NAME}" bash -lc 'command -v ccache >/dev/null 2>&1'; then
+  if command -v ccache >/dev/null 2>&1; then
     LOG_PREFIX="prepare-reconviagen" log "ccache stats:"
-    micromamba run -n "${RECONVIAGEN_ENV_NAME}" ccache --show-stats || true
+    ccache --show-stats || true
   fi
 }
 
@@ -33,8 +33,18 @@ build_reconviagen_cuda_extensions() {
 
   LOG_PREFIX="prepare-reconviagen" log "Building ReconViaGen CUDA extensions. This can take a while on a fresh pod."
   rm -rf /tmp/extensions
-  micromamba run -n "${RECONVIAGEN_ENV_NAME}" bash -lc \
-    "cd '${RECONVIAGEN_REPO_DIR}' && . ./setup.sh ${RECONVIAGEN_CUDA_FLAGS}"
+  RECONVIAGEN_ENV_PYTHON="$(venv_python "${RECONVIAGEN_ENV_DIR}")" \
+    venv_run "${RECONVIAGEN_ENV_DIR}" bash -lc '
+      pip() {
+        if [ "${1:-}" = "install" ]; then
+          shift
+          uv pip install --python "${RECONVIAGEN_ENV_PYTHON}" "$@"
+        else
+          command pip "$@"
+        fi
+      }
+      cd "${RECONVIAGEN_REPO_DIR}" && . ./setup.sh ${RECONVIAGEN_CUDA_FLAGS}
+    '
 
   if [ "${RECONVIAGEN_INSTALL_POSTPROCESSORS}" = "1" ]; then
     optional_pip_install_if_missing cumesh "${RECONVIAGEN_CUMESH_URL}" --no-build-isolation --no-deps

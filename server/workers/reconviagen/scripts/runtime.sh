@@ -19,8 +19,8 @@ start_reconviagen_worker() {
   if ! should_manage_reconviagen || ! is_enabled "${APP_START_RECONVIAGEN}"; then
     return 0
   fi
-  if ! env_exists "${RECONVIAGEN_ENV_NAME}"; then
-    LOG_PREFIX="run.sh" log "ReconViaGen env ${RECONVIAGEN_ENV_NAME} is missing; API will start without a local worker."
+  if ! env_exists "${RECONVIAGEN_ENV_DIR}"; then
+    LOG_PREFIX="run.sh" log "ReconViaGen env ${RECONVIAGEN_ENV_NAME} at ${RECONVIAGEN_ENV_DIR} is missing; API will start without a local worker."
     return 0
   fi
 
@@ -30,7 +30,7 @@ start_reconviagen_worker() {
   LOG_PREFIX="run.sh" log "Starting ReconViaGen worker on ${RECONVIAGEN_WORKER_URL}; logging to ${RECONVIAGEN_WORKER_LOG}."
   (
     cd "${SERVER_DIR}"
-    exec micromamba run -n "${RECONVIAGEN_ENV_NAME}" env \
+    exec venv_run "${RECONVIAGEN_ENV_DIR}" env \
       PYTHONPATH="${SERVER_DIR}:${PYTHONPATH:-}" \
       python -m workers.reconviagen.main \
       --host "${RECONVIAGEN_WORKER_HOST}" \

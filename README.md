@@ -21,7 +21,7 @@ iPhone LiDAR ScanPackage.zip
 
 - `ios/VGGTLiDARScanApp`: SwiftUI iPhone app for LiDAR capture, scan package export, backend upload, result preview, and sharing.
 - `server/api`: FastAPI orchestrator for scan parsing, LiDAR point-cloud generation, ReconViaGen routing, metric alignment, and asset export.
-- `server/workers/reconviagen`: ReconViaGen worker that runs in a separate micromamba environment.
+- `server/workers/reconviagen`: ReconViaGen worker that runs in a separate uv environment.
 - `server/run.sh`: Main server entrypoint. It prepares the API environment, prepares/starts the ReconViaGen worker, then starts the API.
 - `docs`: README screenshots and result images.
 
@@ -139,4 +139,3 @@ Mock mode writes a synthetic mesh while preserving the API and export flow.
 ## Current Scope
 
 This repository is now focused on the ReconViaGen + LiDAR scale-alignment path. The active project no longer includes the older standalone VGGT point-cloud pipeline, Open3D TSDF reconstruction path, SAM/Ultralytics/TIMM segmentation path, or the previous iOS pipeline selector/toggle UI.
-
