@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gc
 import os
+import resource
 import shutil
 import subprocess
 import sys
@@ -19,9 +20,11 @@ except ImportError:
 class ReconViaGenService:
     def __init__(self) -> None:
         started = time.perf_counter()
+        _configure_thread_env()
         settings = reconviagen_settings()
         _log("initializing ReconViaGen worker")
         _log(f"settings: {_settings_summary(settings)}")
+        _log_thread_diagnostics()
         repo_dir = settings.repo_dir.expanduser()
         vendor_dirs = [
             repo_dir,
@@ -222,6 +225,44 @@ def _snapshot_path(model: str) -> Path | str:
 def _log(message: str) -> None:
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[reconviagen] {timestamp} {message}", flush=True)
+
+
+def _configure_thread_env() -> None:
+    defaults = {
+        "OMP_NUM_THREADS": "1",
+        "MKL_NUM_THREADS": "1",
+        "OPENBLAS_NUM_THREADS": "1",
+        "NUMEXPR_NUM_THREADS": "1",
+        "VECLIB_MAXIMUM_THREADS": "1",
+        "BLIS_NUM_THREADS": "1",
+        "TOKENIZERS_PARALLELISM": "false",
+    }
+    for name, value in defaults.items():
+        os.environ.setdefault(name, value)
+
+
+def _log_thread_diagnostics() -> None:
+    try:
+        nproc_soft, nproc_hard = resource.getrlimit(resource.RLIMIT_NPROC)
+    except Exception:
+        nproc_soft, nproc_hard = "unknown", "unknown"
+    try:
+        cpu_count = len(os.sched_getaffinity(0))
+    except Exception:
+        cpu_count = os.cpu_count()
+    env = {
+        name: os.environ.get(name, "<unset>")
+        for name in (
+            "OMP_NUM_THREADS",
+            "MKL_NUM_THREADS",
+            "OPENBLAS_NUM_THREADS",
+            "NUMEXPR_NUM_THREADS",
+            "VECLIB_MAXIMUM_THREADS",
+            "BLIS_NUM_THREADS",
+            "TOKENIZERS_PARALLELISM",
+        )
+    }
+    _log(f"thread limits: cpus={cpu_count} RLIMIT_NPROC=({nproc_soft}, {nproc_hard}) env={env}")
 
 
 @contextmanager
