@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from huggingface_hub import snapshot_download
+from huggingface_hub.errors import RepositoryNotFoundError
 
 
 def log(message: str) -> None:
@@ -78,6 +79,8 @@ def walk_strings(value: Any) -> list[str]:
 def looks_like_hf_repo(value: str) -> bool:
     if value.startswith((".", "/", "http://", "https://")):
         return False
+    if value.startswith(("ckpts/", "checkpoints/", "models/", "weights/")):
+        return False
     if "/" not in value:
         return False
     if value.count("/") != 1:
@@ -96,7 +99,10 @@ def prefetch_nested_repos(snapshot: Path) -> None:
             continue
         repos = sorted({value for value in walk_strings(config) if looks_like_hf_repo(value)})
         for repo in repos:
-            resolve_snapshot(f"nested model from {config_path.name}", repo)
+            try:
+                resolve_snapshot(f"nested model from {config_path.name}", repo)
+            except RepositoryNotFoundError:
+                log(f"nested model from {config_path.name}: skipping unresolved repo={repo}")
 
 
 def prefetch_dinov2() -> None:
