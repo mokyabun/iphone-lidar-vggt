@@ -118,9 +118,10 @@ if not path.exists():
     raise SystemExit(0)
 
 text = path.read_text()
-if "self.keys = key" in text:
-    raise SystemExit(0)
 
+# Step 1 — accept Triton builds whose Autotuner signature uses keyword args (and an
+# optional do_bench param). FlexGEMM 0.0.1 calls super().__init__ positionally, which
+# breaks on newer Triton. Convert it to a keyword call once.
 old = """        super().__init__(
             fn,
             arg_names,
@@ -159,25 +160,30 @@ new = """        autotuner_kwargs = dict(
         self.keys = key
 """
 if old in text:
-    path.write_text(text.replace(old, new))
-    raise SystemExit(0)
-
-patched_super = """        super().__init__(
-            fn,
-            arg_names,
-            configs,
-            key,
-            reset_to_zero,
-            restore_value,
-            **autotuner_kwargs,
-        )
-"""
-if patched_super in text:
-    path.write_text(text.replace(patched_super, patched_super + "        self.keys = key\n"))
-    raise SystemExit(0)
-
-if old not in text:
+    text = text.replace(old, new)
+elif "self.keys = key" not in text:
     raise SystemExit("FlexGEMM autotuner layout changed; cannot patch Triton compatibility.")
+
+# Step 2 — the actual Triton 3.x fix. FlexGEMM defaults warmup/rep to None (an older
+# "auto-estimate" convention), but Triton 3.x do_bench() treats them as millisecond
+# budgets and computes int(warmup / estimate_ms), so None raises
+# "unsupported operand type(s) for /: 'NoneType' and 'float'" the first time a sparse
+# conv kernel autotunes (during mesh decode). Coerce None to Triton's standard defaults.
+marker = "# [reconviagen-patch] coerce None warmup/rep"
+if marker not in text:
+    anchor = "        autotuner_kwargs = dict(\n"
+    if anchor not in text:
+        raise SystemExit("FlexGEMM autotuner kwargs block missing; cannot apply warmup/rep coercion.")
+    inject = (
+        "        " + marker + " for Triton 3.x do_bench (needs numeric ms budgets)\n"
+        "        if warmup is None:\n"
+        "            warmup = 25\n"
+        "        if rep is None:\n"
+        "            rep = 100\n"
+    )
+    text = text.replace(anchor, inject + anchor, 1)
+
+path.write_text(text)
 PY
 }
 
@@ -193,6 +199,8 @@ if not path.exists():
 text = path.read_text()
 if "self.keys = key" not in text:
     raise SystemExit("[env-reconviagen] FlexGEMM Triton autotuner patch was not applied.")
+if "# [reconviagen-patch] coerce None warmup/rep" not in text:
+    raise SystemExit("[env-reconviagen] FlexGEMM Triton warmup/rep coercion was not applied.")
 print(f"[env-reconviagen] FlexGEMM Triton autotuner patch verified: {path}")
 PY
 }
