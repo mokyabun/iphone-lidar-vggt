@@ -9,7 +9,6 @@ import sys
 import threading
 import time
 import traceback
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -73,10 +72,6 @@ class ReconViaGenService:
         self.torch = torch
         low_vram = settings.low_vram
 
-        # Initialise the CUDA context in the main thread before the two loader threads
-        # touch the GPU concurrently below.
-        torch.cuda.init()
-
         def _load_sparse_structure_pipeline():
             with _timed("resolve sparse-structure model snapshot"):
                 ss_model = _snapshot_path(settings.ss_model)
@@ -113,14 +108,13 @@ class ReconViaGenService:
             _log_cuda(torch, "after TRELLIS.2 cuda")
             return pipeline
 
-        # The two pipelines are independent and their loads are CPU-bound, so build them
-        # concurrently. .result() re-raises any exception from the worker threads.
-        _log("loading sparse-structure and TRELLIS.2 pipelines in parallel")
-        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="load") as pool:
-            ss_future = pool.submit(_load_sparse_structure_pipeline)
-            trellis2_future = pool.submit(_load_trellis2_pipeline)
-            vggt_pipeline = ss_future.result()
-            trellis2_pipeline = trellis2_future.result()
+        # Load sequentially (not in parallel): BiRefNet/DINOv3 load through HuggingFace
+        # from_pretrained, which constructs weights under a process-global meta-device
+        # context. Building both pipelines concurrently races on that global state and
+        # strands tensors on the meta device ("Cannot copy out of meta tensor"). The
+        # speed-up here comes from the boosted intra-op thread count, not concurrency.
+        vggt_pipeline = _load_sparse_structure_pipeline()
+        trellis2_pipeline = _load_trellis2_pipeline()
 
         # Models are resident; restore the inference-time thread pin.
         if settings.torch_num_threads > 0:
