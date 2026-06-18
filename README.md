@@ -68,6 +68,7 @@ Server/runtime:
 export APP_HOST=0.0.0.0
 export APP_PORT=8000
 export APP_CACHE_ROOT=/workspace/cache
+export APP_LOCAL_ROOT=/opt/iphone-lidar-vggt
 export APP_RUN_ROOT=runs/api
 export APP_UPDATE_ENVS=1
 ```

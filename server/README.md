@@ -19,7 +19,7 @@ This server keeps the app layer thin while still managing a local ReconViaGen wo
 - `api`: FastAPI orchestrator for scan parsing, job routing, LiDAR alignment, and asset export; prepared from `api/requirements.txt` in a uv venv.
 - `worker-reconviagen`: ReconViaGen AI worker; prepared from `workers/reconviagen/requirements.txt` in a separate uv venv.
 
-Existing envs under `${APP_CACHE_ROOT}/venvs` are reused by default to avoid repeated dependency solving. Set `APP_UPDATE_ENVS=1` when you want to apply dependency file changes.
+Existing envs under `${APP_LOCAL_ROOT:-/opt/iphone-lidar-vggt}/venvs` are reused by default to avoid repeated dependency solving. Set `APP_UPDATE_ENVS=1` when you want to apply dependency file changes. Large model and build caches still live under `${APP_CACHE_ROOT}` by default.
 
 If the base image already has compatible PyTorch 2.4.x packages, set `RECONVIAGEN_USE_SYSTEM_TORCH=1` before the worker env is first created. The uv env will use system site-packages and skip the pinned `torch`, `torchvision`, and `torchaudio` entries from `workers/reconviagen/requirements.txt`.
 
@@ -38,8 +38,8 @@ APP_PREPARE_RECONVIAGEN=1 APP_START_RECONVIAGEN=1 ./run.sh
 One-shot worker runner:
 
 ```bash
-VIRTUAL_ENV="${APP_CACHE_ROOT:-/workspace/cache}/venvs/worker-reconviagen" \
-PATH="${APP_CACHE_ROOT:-/workspace/cache}/venvs/worker-reconviagen/bin:$PATH" \
+VIRTUAL_ENV="${APP_LOCAL_ROOT:-/opt/iphone-lidar-vggt}/venvs/worker-reconviagen" \
+PATH="${APP_LOCAL_ROOT:-/opt/iphone-lidar-vggt}/venvs/worker-reconviagen/bin:$PATH" \
 PYTHONPATH="$PWD" python -m workers.reconviagen.main \
   --once \
   --input-dir /path/to/reconviagen_views \

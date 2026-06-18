@@ -8,10 +8,10 @@ APP_DIR="$(cd "${SERVER_DIR}/.." && pwd)"
 export SERVER_DIR
 export APP_DIR
 export APP_CACHE_ROOT="${APP_CACHE_ROOT:-/workspace/cache}"
-export APP_BIN_DIR="${APP_BIN_DIR:-${APP_CACHE_ROOT}/bin}"
+export APP_LOCAL_ROOT="${APP_LOCAL_ROOT:-/opt/iphone-lidar-vggt}"
+export APP_BIN_DIR="${APP_BIN_DIR:-${APP_LOCAL_ROOT}/bin}"
 export PATH="${APP_BIN_DIR}:${PATH}"
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
-export PYTHONPYCACHEPREFIX="${PYTHONPYCACHEPREFIX:-/tmp/iphone-lidar-vggt-pycache}"
 export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"
 export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
 export NUMEXPR_NUM_THREADS="${NUMEXPR_NUM_THREADS:-1}"
@@ -24,7 +24,7 @@ export RECONVIAGEN_REPO_REF="${RECONVIAGEN_REPO_REF:-v0.5}"
 export RECONVIAGEN_REPO_DIR="${RECONVIAGEN_REPO_DIR:-${APP_CACHE_ROOT}/ReconViaGen}"
 export RECONVIAGEN_ENV_NAME="${RECONVIAGEN_ENV_NAME:-worker-reconviagen}"
 export RECONVIAGEN_PYTHON_VERSION="${RECONVIAGEN_PYTHON_VERSION:-3.10}"
-export RECONVIAGEN_ENV_DIR="${RECONVIAGEN_ENV_DIR:-${APP_CACHE_ROOT}/venvs/${RECONVIAGEN_ENV_NAME}}"
+export RECONVIAGEN_ENV_DIR="${RECONVIAGEN_ENV_DIR:-${APP_LOCAL_ROOT}/venvs/${RECONVIAGEN_ENV_NAME}}"
 export RECONVIAGEN_CUDA_FLAGS="${RECONVIAGEN_CUDA_FLAGS:---xformers --flash-attn --spconv --kaolin --nvdiffrast}"
 # Keep TRELLIS.2 postprocessor wheels on a Python 3.10 compatible snapshot.
 # The current TRELLIS.2 Space tracks newer torch/CUDA/Python wheels than ReconViaGen v0.5.

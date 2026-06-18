@@ -7,6 +7,7 @@ ensure_reconviagen_env() {
 
   if ! env_exists "${RECONVIAGEN_ENV_DIR}"; then
     LOG_PREFIX="worker-reconviagen-env" log "Creating uv env ${RECONVIAGEN_ENV_NAME} at ${RECONVIAGEN_ENV_DIR}."
+    mkdir -p "$(dirname "${RECONVIAGEN_ENV_DIR}")"
     uv venv --python "${RECONVIAGEN_PYTHON_VERSION}" "${venv_args[@]}" "${RECONVIAGEN_ENV_DIR}"
     install_reconviagen_requirements "${requirements_file}"
     configure_ccache
