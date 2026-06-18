@@ -137,6 +137,7 @@ class ReconViaGenService:
         _log_cuda(self.torch, "after reconstruction")
         mesh = meshes[0]
         _log(f"mesh generated: {_mesh_summary(mesh)} latent_resolution={latents[2]}")
+        _check_mesh_is_reconstructable(mesh, latents)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             import o_voxel
@@ -402,6 +403,38 @@ def _log_directory_summary(path: Path) -> None:
 
 def _image_summary(path: Path, image: object) -> str:
     return f"{path.name}:{image.width}x{image.height}/{image.mode}"
+
+
+def _check_mesh_is_reconstructable(mesh: object, latents: object) -> None:
+    """Fail fast (with an actionable message) on a degenerate reconstruction.
+
+    When the sparse-structure stage finds nothing to reconstruct (e.g. a view with
+    no clear foreground object), it yields an empty/None mesh. Downstream decode and
+    postprocess then divide by quantities derived from zero geometry and blow up with
+    cryptic errors such as ``unsupported operand type(s) for /: 'NoneType' and 'float'``.
+    Catch it here instead, so the failure names the real cause.
+    """
+    resolution = latents[2] if latents is not None and len(latents) > 2 else None
+    if resolution is None:
+        raise RuntimeError(
+            "ReconViaGen returned no latent resolution; the reconstruction is degenerate "
+            "(the input view likely has no clear foreground object to reconstruct)."
+        )
+
+    def _count(value: object) -> int | None:
+        shape = getattr(value, "shape", None)
+        if shape is None or len(shape) == 0:
+            return None
+        return int(shape[0])
+
+    vertex_count = _count(getattr(mesh, "vertices", None))
+    face_count = _count(getattr(mesh, "faces", None))
+    if not vertex_count or not face_count:
+        raise RuntimeError(
+            "ReconViaGen produced an empty mesh "
+            f"(vertices={vertex_count}, faces={face_count}); the reconstruction is degenerate. "
+            "The input view likely has no clear foreground object to reconstruct."
+        )
 
 
 def _mesh_summary(mesh: object) -> str:

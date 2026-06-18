@@ -4,6 +4,7 @@ import argparse
 import sys
 import threading
 import time
+import traceback
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -53,8 +54,18 @@ def create_app(service: ReconViaGenService | None = None) -> FastAPI:
         try:
             get_service().generate(Path(request.input_dir), Path(request.output_path))
         except Exception as exc:
-            print(f"[reconviagen] generation failed after {time.perf_counter() - started:.1f}s: {exc}", flush=True)
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            # Surface the full traceback: the failing frame is usually deep inside the
+            # vendored ReconViaGen/TRELLIS pipeline, and str(exc) alone (e.g. a bare
+            # "unsupported operand type(s) for /: 'NoneType' and 'float'") gives no hint
+            # of where it came from. Log it here and forward it in the 500 detail so it
+            # lands in the API/pipeline logs too.
+            tb = traceback.format_exc()
+            print(
+                f"[reconviagen] generation failed after {time.perf_counter() - started:.1f}s: {exc}\n{tb}",
+                flush=True,
+            )
+            detail = f"{type(exc).__name__}: {exc}\n{tb}"
+            raise HTTPException(status_code=500, detail=detail) from exc
         print(f"[reconviagen] generation succeeded in {time.perf_counter() - started:.1f}s", flush=True)
         return GenerateResponse(status="ok")
 
