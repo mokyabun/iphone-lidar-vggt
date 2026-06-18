@@ -29,7 +29,9 @@ install_reconviagen_requirements() {
 
   if is_enabled "${RECONVIAGEN_USE_SYSTEM_TORCH:-0}"; then
     LOG_PREFIX="worker-reconviagen-env" log "Using image-provided torch packages via system site-packages."
-    uv pip install --python "${python_bin}" -r <(
+    uv pip install --python "${python_bin}" \
+      --excludes <(printf 'torch\ntorchvision\ntorchaudio\n') \
+      -r <(
       grep -Ev '^(--extra-index-url[[:space:]]+https://download\.pytorch\.org/whl/|torch==|torchvision==|torchaudio==)' "${requirements_file}"
     )
   else
