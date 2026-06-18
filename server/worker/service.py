@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -43,13 +44,19 @@ class ReconViaGenService:
 
         import torch
 
+        # Inter-op threads can only be set once, before any inter-op work runs. Intra-op
+        # threads are boosted for the one-off model load below: weight init, fp16
+        # conversion and state_dict copies of billions of params are element-wise and
+        # parallelise across cores, but the worker otherwise pins torch to
+        # torch_num_threads for inference. We restore that pin once the models are resident.
         if settings.torch_num_threads > 0:
-            torch.set_num_threads(settings.torch_num_threads)
             try:
                 torch.set_num_interop_threads(max(1, min(settings.torch_num_threads, 4)))
             except RuntimeError:
                 pass
-            _log(f"torch threads: intra_op={torch.get_num_threads()} inter_op={torch.get_num_interop_threads()}")
+        load_threads = _resolve_load_threads(settings)
+        torch.set_num_threads(load_threads)
+        _log(f"torch threads (load phase): intra_op={torch.get_num_threads()} inter_op={torch.get_num_interop_threads()}")
         _log_cuda_diagnostics(torch)
         if settings.require_cuda and not torch.cuda.is_available():
             raise RuntimeError(
@@ -65,37 +72,61 @@ class ReconViaGenService:
 
         self.torch = torch
         low_vram = settings.low_vram
-        with _timed("resolve sparse-structure model snapshot"):
-            ss_model = _snapshot_path(settings.ss_model)
-        _log(f"sparse-structure model path: {ss_model}")
-        with _timed("load sparse-structure pipeline"):
-            vggt_pipeline = TrellisVGGTTo3DPipeline.from_pretrained(str(ss_model))
-        with _timed("move sparse-structure pipeline to cuda"):
-            vggt_pipeline.cuda()
-            vggt_pipeline.VGGT_model.cuda()
-            vggt_pipeline.birefnet_model.cuda()
-        _log_cuda(torch, "after sparse-structure cuda")
-        if "slat_decoder_gs" in vggt_pipeline.models:
-            del vggt_pipeline.models["slat_decoder_gs"]
-            _log("removed unused slat_decoder_gs model")
-        if low_vram:
-            with _timed("offload sparse-structure pipeline for low_vram"):
-                vggt_pipeline.VGGT_model.cpu()
-                for model in vggt_pipeline.models.values():
-                    model.cpu()
-                gc.collect()
-                torch.cuda.empty_cache()
-            _log_cuda(torch, "after sparse-structure offload")
 
-        with _timed("resolve TRELLIS.2 model snapshot"):
-            trellis_model = _snapshot_path(settings.trellis_model)
-        _log(f"TRELLIS.2 model path: {trellis_model}")
-        with _timed("load TRELLIS.2 pipeline"):
-            trellis2_pipeline = Trellis2ImageTo3DPipeline.from_pretrained(str(trellis_model))
-        trellis2_pipeline.low_vram = low_vram
-        with _timed("move TRELLIS.2 pipeline to cuda"):
-            trellis2_pipeline.cuda()
-        _log_cuda(torch, "after TRELLIS.2 cuda")
+        # Initialise the CUDA context in the main thread before the two loader threads
+        # touch the GPU concurrently below.
+        torch.cuda.init()
+
+        def _load_sparse_structure_pipeline():
+            with _timed("resolve sparse-structure model snapshot"):
+                ss_model = _snapshot_path(settings.ss_model)
+            _log(f"sparse-structure model path: {ss_model}")
+            with _timed("load sparse-structure pipeline"):
+                pipeline = TrellisVGGTTo3DPipeline.from_pretrained(str(ss_model))
+            with _timed("move sparse-structure pipeline to cuda"):
+                pipeline.cuda()
+                pipeline.VGGT_model.cuda()
+                pipeline.birefnet_model.cuda()
+            _log_cuda(torch, "after sparse-structure cuda")
+            if "slat_decoder_gs" in pipeline.models:
+                del pipeline.models["slat_decoder_gs"]
+                _log("removed unused slat_decoder_gs model")
+            if low_vram:
+                with _timed("offload sparse-structure pipeline for low_vram"):
+                    pipeline.VGGT_model.cpu()
+                    for model in pipeline.models.values():
+                        model.cpu()
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                _log_cuda(torch, "after sparse-structure offload")
+            return pipeline
+
+        def _load_trellis2_pipeline():
+            with _timed("resolve TRELLIS.2 model snapshot"):
+                trellis_model = _snapshot_path(settings.trellis_model)
+            _log(f"TRELLIS.2 model path: {trellis_model}")
+            with _timed("load TRELLIS.2 pipeline"):
+                pipeline = Trellis2ImageTo3DPipeline.from_pretrained(str(trellis_model))
+            pipeline.low_vram = low_vram
+            with _timed("move TRELLIS.2 pipeline to cuda"):
+                pipeline.cuda()
+            _log_cuda(torch, "after TRELLIS.2 cuda")
+            return pipeline
+
+        # The two pipelines are independent and their loads are CPU-bound, so build them
+        # concurrently. .result() re-raises any exception from the worker threads.
+        _log("loading sparse-structure and TRELLIS.2 pipelines in parallel")
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="load") as pool:
+            ss_future = pool.submit(_load_sparse_structure_pipeline)
+            trellis2_future = pool.submit(_load_trellis2_pipeline)
+            vggt_pipeline = ss_future.result()
+            trellis2_pipeline = trellis2_future.result()
+
+        # Models are resident; restore the inference-time thread pin.
+        if settings.torch_num_threads > 0:
+            torch.set_num_threads(settings.torch_num_threads)
+        _log(f"torch threads (inference): intra_op={torch.get_num_threads()}")
+
         self.pipeline = TrellisHybridPipeline(vggt_pipeline, trellis2_pipeline, low_vram=low_vram)
         _log(f"worker ready in {time.perf_counter() - started:.1f}s")
 
@@ -230,6 +261,24 @@ def _log(message: str) -> None:
     print(f"[reconviagen] {timestamp} {message}", flush=True)
 
 
+def _resolve_load_threads(settings: ReconViaGenSettings) -> int:
+    """Pick how many CPU threads to use for the one-off model load.
+
+    Loading (weight init, fp16 conversion, state_dict copies) is element-wise and scales
+    with cores, but the worker otherwise pins torch to a single thread for inference. Use
+    a bounded slice of the available CPUs just for the load. ``load_num_threads <= 0``
+    means "use every available CPU".
+    """
+    try:
+        cpus = len(os.sched_getaffinity(0))
+    except Exception:
+        cpus = os.cpu_count() or 1
+    want = settings.load_num_threads
+    if want <= 0:
+        want = cpus
+    return max(1, min(cpus, want))
+
+
 def _configure_thread_env() -> None:
     defaults = {
         "OMP_NUM_THREADS": "1",
@@ -286,14 +335,18 @@ def _timed(label: str):
 def _start_heartbeat(label: str, started: float, stop_event: threading.Event) -> threading.Thread | None:
     settings = reconviagen_settings()
     interval = settings.heartbeat_seconds
+    stack_interval = settings.heartbeat_stack_seconds
     if interval <= 0:
         return None
 
     def run() -> None:
+        last_stack_dump = 0.0
         while not stop_event.wait(interval):
             elapsed = time.perf_counter() - started
             _log(f"{label}: still running after {elapsed:.1f}s")
-            _dump_thread_stacks(label)
+            if stack_interval > 0 and elapsed >= stack_interval and elapsed - last_stack_dump >= stack_interval:
+                last_stack_dump = elapsed
+                _dump_thread_stacks(label)
 
     thread = threading.Thread(target=run, name=f"heartbeat:{label}", daemon=True)
     thread.start()
@@ -323,7 +376,8 @@ def _is_noise_thread(thread: threading.Thread) -> bool:
 def _settings_summary(settings: ReconViaGenSettings) -> str:
     return (
         f"repo_dir={settings.repo_dir} low_vram={settings.low_vram} require_cuda={settings.require_cuda} "
-        f"torch_num_threads={settings.torch_num_threads} "
+        f"torch_num_threads={settings.torch_num_threads} heartbeat_seconds={settings.heartbeat_seconds} "
+        f"heartbeat_stack_seconds={settings.heartbeat_stack_seconds} "
         f"ss_model={settings.ss_model} trellis_model={settings.trellis_model} "
         f"pipeline_type={settings.pipeline_type} ss_source={settings.ss_source} "
         f"preprocess_image={settings.preprocess_image}"

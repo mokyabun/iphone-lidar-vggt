@@ -285,14 +285,18 @@ def _timed(label: str):
 def _start_heartbeat(label: str, started: float, stop_event: threading.Event) -> threading.Thread | None:
     settings = reconviagen_settings()
     interval = settings.heartbeat_seconds
+    stack_interval = settings.heartbeat_stack_seconds
     if interval <= 0:
         return None
 
     def run() -> None:
+        last_stack_dump = 0.0
         while not stop_event.wait(interval):
             elapsed = time.perf_counter() - started
             _log(f"{label}: still running after {elapsed:.1f}s")
-            _dump_thread_stacks(label)
+            if stack_interval > 0 and elapsed >= stack_interval and elapsed - last_stack_dump >= stack_interval:
+                last_stack_dump = elapsed
+                _dump_thread_stacks(label)
 
     thread = threading.Thread(target=run, name=f"heartbeat:{label}", daemon=True)
     thread.start()
@@ -300,8 +304,13 @@ def _start_heartbeat(label: str, started: float, stop_event: threading.Event) ->
 
 
 def _dump_thread_stacks(label: str) -> None:
+    current_ident = threading.get_ident()
     frames = sys._current_frames()
     for thread in threading.enumerate():
+        # Skip the heartbeat thread itself (it is just running this dump) and
+        # tqdm's monitor daemon, which is always idle and only adds noise.
+        if thread.ident == current_ident or _is_noise_thread(thread):
+            continue
         frame = frames.get(thread.ident)
         if frame is None:
             continue
@@ -309,10 +318,16 @@ def _dump_thread_stacks(label: str) -> None:
         _log(f"{label}: stack thread={thread.name} ident={thread.ident}\n{stack}")
 
 
+def _is_noise_thread(thread: threading.Thread) -> bool:
+    name = thread.name or ""
+    return name == "tqdm_monitor" or name.startswith("heartbeat:")
+
+
 def _settings_summary(settings: ReconViaGenSettings) -> str:
     return (
         f"repo_dir={settings.repo_dir} low_vram={settings.low_vram} require_cuda={settings.require_cuda} "
-        f"torch_num_threads={settings.torch_num_threads} "
+        f"torch_num_threads={settings.torch_num_threads} heartbeat_seconds={settings.heartbeat_seconds} "
+        f"heartbeat_stack_seconds={settings.heartbeat_stack_seconds} "
         f"ss_model={settings.ss_model} trellis_model={settings.trellis_model} "
         f"pipeline_type={settings.pipeline_type} ss_source={settings.ss_source} "
         f"preprocess_image={settings.preprocess_image}"
