@@ -300,13 +300,23 @@ def _start_heartbeat(label: str, started: float, stop_event: threading.Event) ->
 
 
 def _dump_thread_stacks(label: str) -> None:
+    current_ident = threading.get_ident()
     frames = sys._current_frames()
     for thread in threading.enumerate():
+        # Skip the heartbeat thread itself (it is just running this dump) and
+        # tqdm's monitor daemon, which is always idle and only adds noise.
+        if thread.ident == current_ident or _is_noise_thread(thread):
+            continue
         frame = frames.get(thread.ident)
         if frame is None:
             continue
         stack = "".join(traceback.format_stack(frame, limit=12)).rstrip()
         _log(f"{label}: stack thread={thread.name} ident={thread.ident}\n{stack}")
+
+
+def _is_noise_thread(thread: threading.Thread) -> bool:
+    name = thread.name or ""
+    return name == "tqdm_monitor" or name.startswith("heartbeat:")
 
 
 def _settings_summary(settings: ReconViaGenSettings) -> str:
