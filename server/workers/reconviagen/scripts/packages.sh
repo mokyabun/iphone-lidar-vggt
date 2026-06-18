@@ -31,6 +31,8 @@ from packaging.version import Version
 
 exact_expected = {
     "kornia": "0.8.2",
+    "triton": "3.0.0",
+    "xformers": "0.0.27.post2",
 }
 minimum_expected = {
     "timm": "0.9.16",
@@ -104,7 +106,7 @@ if not path.exists():
     raise SystemExit(0)
 
 text = path.read_text()
-if "autotuner_kwargs = dict(" in text:
+if "self.keys = key" in text:
     raise SystemExit(0)
 
 old = """        super().__init__(
@@ -142,9 +144,46 @@ new = """        autotuner_kwargs = dict(
             restore_value,
             **autotuner_kwargs,
         )
+        self.keys = key
 """
+if old in text:
+    path.write_text(text.replace(old, new))
+    raise SystemExit(0)
+
+patched_super = """        super().__init__(
+            fn,
+            arg_names,
+            configs,
+            key,
+            reset_to_zero,
+            restore_value,
+            **autotuner_kwargs,
+        )
+"""
+if patched_super in text:
+    path.write_text(text.replace(patched_super, patched_super + "        self.keys = key\n"))
+    raise SystemExit(0)
+
 if old not in text:
     raise SystemExit("FlexGEMM autotuner layout changed; cannot patch Triton compatibility.")
-path.write_text(text.replace(old, new))
+PY
+}
+
+verify_flex_gemm_triton_autotuner_patch() {
+  if [ "${RECONVIAGEN_INSTALL_POSTPROCESSORS:-1}" != "1" ]; then
+    return 0
+  fi
+  venv_run "${RECONVIAGEN_ENV_DIR}" python - <<'PY'
+from pathlib import Path
+import sysconfig
+
+path = Path(sysconfig.get_paths()["purelib"]) / "flex_gemm" / "utils" / "autotuner.py"
+if not path.exists():
+    raise SystemExit(0)
+
+text = path.read_text()
+if "self.keys = key" not in text:
+    raise SystemExit("[prepare-reconviagen] FlexGEMM Triton autotuner patch was not applied.")
+print(f"[prepare-reconviagen] FlexGEMM Triton autotuner patch verified: {path}")
 PY
 }

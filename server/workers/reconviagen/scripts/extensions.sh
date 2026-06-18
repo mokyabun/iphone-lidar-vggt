@@ -30,6 +30,10 @@ build_reconviagen_cuda_extensions() {
   fi
   if [ "${RECONVIAGEN_REFRESH}" != "1" ] && [ "${installed_stamp}" = "${expected_stamp}" ]; then
     LOG_PREFIX="prepare-reconviagen" log "ReconViaGen CUDA extensions are already current."
+    if [ "${RECONVIAGEN_INSTALL_POSTPROCESSORS}" = "1" ]; then
+      patch_flex_gemm_triton_autotuner
+      verify_flex_gemm_triton_autotuner_patch
+    fi
     show_reconviagen_ccache_stats
     return 0
   fi
@@ -58,6 +62,7 @@ build_reconviagen_cuda_extensions() {
       optional_pip_install_if_missing o_voxel "${RECONVIAGEN_REPO_DIR}/wheels/TRELLIS.2/o-voxel" --no-build-isolation --no-deps
     fi
     patch_flex_gemm_triton_autotuner
+    verify_flex_gemm_triton_autotuner_patch
   else
     LOG_PREFIX="prepare-reconviagen" log "Skipping optional postprocessors. Set RECONVIAGEN_INSTALL_POSTPROCESSORS=1 to try CuMesh/FlexGEMM/o-voxel."
   fi
