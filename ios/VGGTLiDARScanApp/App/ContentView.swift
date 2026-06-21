@@ -4,6 +4,7 @@ struct ContentView: View {
     @StateObject private var scanner = ScanSessionManager()
     @AppStorage("backendBaseURL") private var backendBaseURL = "http://127.0.0.1:8000"
     @AppStorage("enableSAM3ObjectMasking") private var enableSAM3ObjectMasking = false
+    @AppStorage("sam3TextPrompt") private var sam3TextPrompt = ""
     @AppStorage("enableLiDARScaleAlignment") private var enableLiDARScaleAlignment = true
     @State private var showResult = false
     @State private var showSettings = false
@@ -31,6 +32,7 @@ struct ContentView: View {
             BackendSettingsView(
                 backendBaseURL: $backendBaseURL,
                 enableSAM3ObjectMasking: $enableSAM3ObjectMasking,
+                sam3TextPrompt: $sam3TextPrompt,
                 enableLiDARScaleAlignment: $enableLiDARScaleAlignment,
                 scanner: scanner,
                 refresh: refreshBackend
@@ -89,7 +91,8 @@ struct ContentView: View {
                                 backendBaseURL: backendBaseURL,
                                 options: BackendReconstructionOptions(
                                     enableSAM3ObjectMasking: enableSAM3ObjectMasking,
-                                    enableLiDARScaleAlignment: enableLiDARScaleAlignment
+                                    enableLiDARScaleAlignment: enableLiDARScaleAlignment,
+                                    sam3TextPrompt: sam3TextPrompt
                                 )
                             )
                             showResult = scanner.resultURL != nil

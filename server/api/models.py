@@ -31,3 +31,4 @@ class ReconstructionResult:
 class ReconstructionOptions:
     enable_sam3_object_masking: bool = False
     enable_lidar_scale_alignment: bool = True
+    sam3_text_prompt: str = ""

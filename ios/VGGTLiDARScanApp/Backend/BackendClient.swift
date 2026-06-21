@@ -45,6 +45,11 @@ struct BackendClient {
             boundary: boundary
         )
         body.appendFormField(
+            name: "sam3_text_prompt",
+            value: options.enableSAM3ObjectMasking ? options.sam3TextPrompt.trimmingCharacters(in: .whitespacesAndNewlines) : "",
+            boundary: boundary
+        )
+        body.appendFormField(
             name: "enable_lidar_scale_alignment",
             value: options.enableLiDARScaleAlignment ? "true" : "false",
             boundary: boundary

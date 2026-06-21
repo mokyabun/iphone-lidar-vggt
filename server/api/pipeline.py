@@ -42,7 +42,12 @@ def reconstruct_scan(
             masks = {frame.frame_id: central_object_mask(read_depth(root, frame)) for frame in selected}
             if options.enable_sam3_object_masking:
                 try:
-                    sam3_masks = segment_with_sam3(root, selected, output_dir / "sam3_masks")
+                    sam3_masks = segment_with_sam3(
+                        root,
+                        selected,
+                        output_dir / "sam3_masks",
+                        text_prompt=options.sam3_text_prompt,
+                    )
                     resized_masks = {
                         frame.frame_id: resize_mask(
                             sam3_masks[frame.frame_id],
@@ -132,6 +137,7 @@ def reconstruct_scan(
         "raw_ply_output": str(raw_ply),
         "aligned_mesh_output": str(preview_glb) if options.enable_lidar_scale_alignment else None,
         "sam3_object_masking_enabled": options.enable_sam3_object_masking,
+        "sam3_text_prompt": options.sam3_text_prompt if options.enable_sam3_object_masking else "",
         "sam3_masking_used": sam3_masking_used,
         "mask_source": "sam3" if sam3_masking_used else "depth",
         "lidar_scale_alignment_enabled": options.enable_lidar_scale_alignment,

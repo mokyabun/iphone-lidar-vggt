@@ -68,6 +68,7 @@ struct BackendReconstructionResult {
 struct BackendReconstructionOptions {
     var enableSAM3ObjectMasking: Bool
     var enableLiDARScaleAlignment: Bool
+    var sam3TextPrompt: String
 }
 
 struct BackendCapabilities: Decodable {

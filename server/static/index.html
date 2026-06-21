@@ -28,9 +28,13 @@
             <label class="option-row">
               <span>
                 <strong>SAM3 object masking</strong>
-                <small>Central box prompt</small>
+                <small>Box + optional text prompt</small>
               </span>
               <input id="sam3Masking" type="checkbox" />
+            </label>
+            <label id="sam3PromptRow" class="prompt-row" hidden>
+              <span>SAM3 prompt</span>
+              <input id="sam3TextPrompt" type="text" placeholder="toy boat" autocomplete="off" />
             </label>
             <label class="option-row">
               <span>

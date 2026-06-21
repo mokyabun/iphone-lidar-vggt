@@ -3,6 +3,7 @@ import SwiftUI
 struct BackendSettingsView: View {
     @Binding var backendBaseURL: String
     @Binding var enableSAM3ObjectMasking: Bool
+    @Binding var sam3TextPrompt: String
     @Binding var enableLiDARScaleAlignment: Bool
     @ObservedObject var scanner: ScanSessionManager
     let refresh: () async -> Void
@@ -49,6 +50,11 @@ struct BackendSettingsView: View {
                 Section("Options") {
                     Toggle(isOn: $enableSAM3ObjectMasking) {
                         Label("SAM3 object masking", systemImage: "viewfinder")
+                    }
+                    if enableSAM3ObjectMasking {
+                        TextField("Object prompt", text: $sam3TextPrompt, prompt: Text("toy boat"))
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
                     }
                     if let capability = scanner.backendCapabilities?.features?.sam3ObjectMasking {
                         capabilityRow("SAM3 worker", capability: capability)

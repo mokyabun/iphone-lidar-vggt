@@ -19,6 +19,7 @@ def segment_with_sam3(
     root: Path,
     frames: list[FrameRecord],
     output_dir: Path,
+    text_prompt: str = "",
 ) -> dict[str, np.ndarray]:
     cfg = settings()
     if not cfg.sam3_worker_url:
@@ -27,12 +28,12 @@ def segment_with_sam3(
     request_frames = []
     for frame in frames:
         image_path = root / frame.image_path
-        box_xyxy = _central_box_xyxy(frame.image_width, frame.image_height)
+        prompt = _prompt_payload(frame.image_width, frame.image_height, text_prompt=text_prompt)
         request_frames.append(
             {
                 "frame_id": frame.frame_id,
                 "image_path": str(image_path),
-                "box_xyxy": box_xyxy,
+                **prompt,
             }
         )
     response = _request_masks(cfg.sam3_worker_url, request_frames, output_dir)
@@ -56,11 +57,49 @@ def segment_with_sam3(
 
 def _central_box_xyxy(width: int, height: int) -> list[float]:
     fraction = min(max(settings().sam3_center_box_fraction, 0.05), 0.95)
+    return _centered_box_xyxy(width, height, fraction)
+
+
+def _focus_box_xyxy(width: int, height: int) -> list[float]:
+    fraction = min(max(settings().sam3_focus_box_fraction, 0.01), 0.5)
+    return _centered_box_xyxy(width, height, fraction)
+
+
+def _centered_box_xyxy(width: int, height: int, fraction: float) -> list[float]:
     box_width = width * fraction
     box_height = height * fraction
     x0 = (width - box_width) / 2
     y0 = (height - box_height) / 2
     return [round(x0, 3), round(y0, 3), round(x0 + box_width, 3), round(y0 + box_height, 3)]
+
+
+def _prompt_payload(width: int, height: int, text_prompt: str = "") -> dict[str, object]:
+    payload: dict[str, object] = {
+        "box_xyxy": _central_box_xyxy(width, height),
+        "positive_boxes_xyxy": [
+            _central_box_xyxy(width, height),
+            _focus_box_xyxy(width, height),
+        ],
+    }
+    if text_prompt.strip():
+        payload["text_prompt"] = text_prompt.strip()
+    if settings().sam3_negative_prompts:
+        payload["negative_boxes_xyxy"] = _negative_guard_boxes_xyxy(width, height)
+    return payload
+
+
+def _negative_guard_boxes_xyxy(width: int, height: int) -> list[list[float]]:
+    side = min(max(settings().sam3_side_negative_fraction, 0.0), 0.35)
+    bottom = min(max(settings().sam3_bottom_negative_fraction, 0.0), 0.35)
+    boxes: list[list[float]] = []
+    if side > 0:
+        side_width = width * side
+        boxes.append([0.0, 0.0, round(side_width, 3), float(height)])
+        boxes.append([round(width - side_width, 3), 0.0, float(width), float(height)])
+    if bottom > 0:
+        bottom_height = height * bottom
+        boxes.append([0.0, round(height - bottom_height, 3), float(width), float(height)])
+    return boxes
 
 
 def _request_masks(worker_url: str, frames: list[dict[str, object]], output_dir: Path) -> dict[str, object]:

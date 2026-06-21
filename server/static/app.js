@@ -1,6 +1,8 @@
 const form = document.querySelector("#uploadForm");
 const input = document.querySelector("#scanPackage");
 const sam3Masking = document.querySelector("#sam3Masking");
+const sam3PromptRow = document.querySelector("#sam3PromptRow");
+const sam3TextPrompt = document.querySelector("#sam3TextPrompt");
 const lidarScaleAlignment = document.querySelector("#lidarScaleAlignment");
 const dropZone = document.querySelector("#dropZone");
 const fileName = document.querySelector("#fileName");
@@ -99,6 +101,7 @@ async function startJob(file) {
   const body = new FormData();
   body.append("scan_package", file);
   body.append("enable_sam3_object_masking", sam3Masking.checked ? "true" : "false");
+  body.append("sam3_text_prompt", sam3Masking.checked ? sam3TextPrompt.value.trim() : "");
   body.append("enable_lidar_scale_alignment", lidarScaleAlignment.checked ? "true" : "false");
 
   submitButton.disabled = true;
@@ -106,6 +109,7 @@ async function startJob(file) {
   setState("queued", {
     file: file.name,
     enable_sam3_object_masking: sam3Masking.checked,
+    sam3_text_prompt: sam3Masking.checked ? sam3TextPrompt.value.trim() : "",
     enable_lidar_scale_alignment: lidarScaleAlignment.checked,
   });
 
@@ -151,6 +155,10 @@ form.addEventListener("submit", async (event) => {
 
 input.addEventListener("change", () => setInputFiles(input.files));
 
+sam3Masking.addEventListener("change", () => {
+  sam3PromptRow.hidden = !sam3Masking.checked;
+});
+
 dropZone.addEventListener("dragover", (event) => {
   event.preventDefault();
   dropZone.classList.add("dragging");
@@ -173,6 +181,7 @@ dropZone.addEventListener("drop", (event) => {
 resetButton.addEventListener("click", () => {
   clearPoll();
   form.reset();
+  sam3PromptRow.hidden = true;
   currentJobId = "";
   fileName.textContent = "Choose or drop a zip file";
   jobIdLabel.textContent = "No job";

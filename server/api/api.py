@@ -56,10 +56,12 @@ def create_job(
     scan_package: UploadFile = File(...),
     enable_sam3_object_masking: bool = Form(False),
     enable_lidar_scale_alignment: bool = Form(True),
+    sam3_text_prompt: str = Form(""),
 ) -> dict[str, object]:
     options = ReconstructionOptions(
         enable_sam3_object_masking=enable_sam3_object_masking,
         enable_lidar_scale_alignment=enable_lidar_scale_alignment,
+        sam3_text_prompt=sam3_text_prompt.strip(),
     )
     job_id, job_dir, package_path = _store_upload(scan_package)
     _log(f"job {job_id}: queued package={package_path} options={options}")
@@ -74,10 +76,12 @@ def reconstruct_now(
     scan_package: UploadFile = File(...),
     enable_sam3_object_masking: bool = Form(False),
     enable_lidar_scale_alignment: bool = Form(True),
+    sam3_text_prompt: str = Form(""),
 ) -> FileResponse:
     options = ReconstructionOptions(
         enable_sam3_object_masking=enable_sam3_object_masking,
         enable_lidar_scale_alignment=enable_lidar_scale_alignment,
+        sam3_text_prompt=sam3_text_prompt.strip(),
     )
     job_id, job_dir, package_path = _store_upload(scan_package)
     _log(f"job {job_id}: synchronous reconstruction requested package={package_path} options={options}")

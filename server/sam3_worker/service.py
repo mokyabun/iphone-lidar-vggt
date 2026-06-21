@@ -6,6 +6,7 @@ import time
 from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from PIL import Image
@@ -68,9 +69,8 @@ class SAM3Service:
         for frame in frames:
             frame_id = str(frame["frame_id"])
             image_path = Path(str(frame["image_path"]))
-            box_xyxy = [float(value) for value in frame["box_xyxy"]]
             image = Image.open(image_path).convert("RGB")
-            mask = self._segment_image(image, box_xyxy)
+            mask = self._segment_image(image, frame)
             if mask is None or not np.any(mask):
                 _log(f"no usable mask for frame_id={frame_id}")
                 continue
@@ -80,13 +80,13 @@ class SAM3Service:
             stats["written"] = int(stats["written"]) + 1
         return {"status": "ok", "masks": masks, "stats": stats}
 
-    def _segment_image(self, image: Image.Image, box_xyxy: list[float]) -> np.ndarray | None:
+    def _segment_image(self, image: Image.Image, prompt: dict[str, Any]) -> np.ndarray | None:
+        box_xyxy = _first_box(prompt)
         if self.mock:
             return _box_mask(image.size, box_xyxy)
         assert self.processor is not None
         assert self.torch is not None
         width, height = image.size
-        box = _xyxy_to_normalized_cxcywh(box_xyxy, width, height)
         autocast = (
             self.torch.autocast("cuda", dtype=self.torch.bfloat16)
             if self.torch.cuda.is_available()
@@ -94,7 +94,21 @@ class SAM3Service:
         )
         with self.torch.inference_mode(), autocast:
             state = self.processor.set_image(image)
-            state = self.processor.add_geometric_prompt(box=box, label=True, state=state)
+            text_prompt = str(prompt.get("text_prompt") or "").strip()
+            if text_prompt:
+                state = self.processor.set_text_prompt(text_prompt, state=state)
+            for positive_box in _prompt_boxes(prompt, "positive_boxes_xyxy", fallback=box_xyxy):
+                state = self.processor.add_geometric_prompt(
+                    box=_xyxy_to_normalized_cxcywh(positive_box, width, height),
+                    label=True,
+                    state=state,
+                )
+            for negative_box in _prompt_boxes(prompt, "negative_boxes_xyxy"):
+                state = self.processor.add_geometric_prompt(
+                    box=_xyxy_to_normalized_cxcywh(negative_box, width, height),
+                    label=False,
+                    state=state,
+                )
         masks = state.get("masks")
         scores = state.get("scores")
         if masks is None or len(masks) == 0:
@@ -112,6 +126,32 @@ class SAM3Service:
             mask_image = Image.fromarray(mask.astype(np.uint8) * 255)
             mask = np.asarray(mask_image.resize((width, height), Image.Resampling.NEAREST)) > 0
         return mask
+
+
+def _first_box(prompt: dict[str, Any]) -> list[float]:
+    if "box_xyxy" in prompt:
+        return [float(value) for value in prompt["box_xyxy"]]
+    boxes = _prompt_boxes(prompt, "positive_boxes_xyxy")
+    if boxes:
+        return boxes[0]
+    raise KeyError("SAM3 prompt did not contain box_xyxy or positive_boxes_xyxy")
+
+
+def _prompt_boxes(
+    prompt: dict[str, Any],
+    key: str,
+    fallback: list[float] | None = None,
+) -> list[list[float]]:
+    raw = prompt.get(key)
+    if raw is None:
+        return [fallback] if fallback is not None else []
+    boxes: list[list[float]] = []
+    for value in raw:
+        if isinstance(value, (list, tuple)) and len(value) == 4:
+            boxes.append([float(item) for item in value])
+    if not boxes and fallback is not None:
+        boxes.append(fallback)
+    return boxes
 
 
 def _xyxy_to_normalized_cxcywh(box_xyxy: list[float], width: int, height: int) -> list[float]:
