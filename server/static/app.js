@@ -18,6 +18,7 @@ const resultLink = document.querySelector("#resultLink");
 const previewLink = document.querySelector("#previewLink");
 const rawLink = document.querySelector("#rawLink");
 const rawPlyLink = document.querySelector("#rawPlyLink");
+const rawStlLink = document.querySelector("#rawStlLink");
 const printLink = document.querySelector("#printLink");
 const lidarLink = document.querySelector("#lidarLink");
 
@@ -57,6 +58,7 @@ function setDownloads(jobId) {
   previewLink.href = `/jobs/${jobId}/preview`;
   rawLink.href = `/jobs/${jobId}/raw`;
   rawPlyLink.href = `/jobs/${jobId}/raw-ply`;
+  rawStlLink.href = `/jobs/${jobId}/raw-stl`;
   printLink.href = `/jobs/${jobId}/print`;
   lidarLink.href = `/jobs/${jobId}/lidar`;
   downloads.hidden = false;

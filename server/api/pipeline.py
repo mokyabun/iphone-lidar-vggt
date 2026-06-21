@@ -87,13 +87,14 @@ def reconstruct_scan(
 
         raw_mesh = output_dir / "reconviagen_raw.glb"
         raw_ply = output_dir / "reconviagen_raw.ply"
+        raw_stl = output_dir / "reconviagen_raw.stl"
         final_ply = output_dir / "reconviagen_metric.ply"
         preview_glb = output_dir / "reconviagen_metric.glb"
         print_stl = output_dir / "reconviagen_metric_print_mm.stl"
         with _timed("generate ReconViaGen mesh"):
             generate_mesh(input_dir, raw_mesh)
         with _timed("export raw ReconViaGen mesh"):
-            raw_mesh_metrics = export_raw_mesh(raw_mesh, raw_ply)
+            raw_mesh_metrics = export_raw_mesh(raw_mesh, raw_ply, raw_stl)
         if options.enable_lidar_scale_alignment:
             with _timed("align ReconViaGen mesh to LiDAR"):
                 mesh_metrics = align_reconviagen_mesh(raw_mesh, final_ply, preview_glb, print_stl, object_points)
@@ -135,6 +136,7 @@ def reconstruct_scan(
         "lidar_reference_output": str(lidar_output),
         "raw_mesh_output": str(raw_mesh),
         "raw_ply_output": str(raw_ply),
+        "raw_stl_output": str(raw_stl),
         "aligned_mesh_output": str(preview_glb) if options.enable_lidar_scale_alignment else None,
         "sam3_object_masking_enabled": options.enable_sam3_object_masking,
         "sam3_text_prompt": options.sam3_text_prompt if options.enable_sam3_object_masking else "",

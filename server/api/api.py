@@ -134,6 +134,11 @@ def get_raw_ply(job_id: str) -> FileResponse:
     return _file_response(job_id, "reconviagen_raw.ply", "reconviagen_raw.ply", "application/octet-stream")
 
 
+@app.get("/jobs/{job_id}/raw-stl")
+def get_raw_stl(job_id: str) -> FileResponse:
+    return _file_response(job_id, "reconviagen_raw.stl", "reconviagen_raw.stl", "model/stl")
+
+
 @app.get("/jobs/{job_id}/print")
 def get_print(job_id: str) -> FileResponse:
     return _file_response(job_id, "reconviagen_metric_print_mm.stl", "reconviagen_metric_print_mm.stl", "model/stl")
