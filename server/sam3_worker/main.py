@@ -6,9 +6,10 @@ import threading
 import time
 import traceback
 from pathlib import Path
+from typing import Annotated
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 try:
     from .service import SAM3Service
@@ -17,13 +18,23 @@ except ImportError:
     from service import SAM3Service
 
 
+BoxXYXY = Annotated[list[float], Field(min_length=4, max_length=4)]
+
+
 class SegmentFrame(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     frame_id: str
     image_path: str
-    box_xyxy: list[float]
+    box_xyxy: BoxXYXY
+    positive_boxes_xyxy: list[BoxXYXY] | None = None
+    negative_boxes_xyxy: list[BoxXYXY] | None = None
+    text_prompt: str | None = None
 
 
 class SegmentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     frames: list[SegmentFrame]
     output_dir: str
 
@@ -58,7 +69,13 @@ def create_app(service: SAM3Service | None = None) -> FastAPI:
     @app.post("/segment")
     def segment(request: SegmentRequest) -> dict[str, object]:
         started = time.perf_counter()
-        print(f"[sam3] segment request: frames={len(request.frames)} output_dir={request.output_dir}", flush=True)
+        print(
+            "[sam3] segment request: "
+            f"frames={len(request.frames)} "
+            f"output_dir={request.output_dir} "
+            f"{_prompt_summary(request.frames)}",
+            flush=True,
+        )
         try:
             payload = get_service().segment(
                 [frame.model_dump() for frame in request.frames],
@@ -75,6 +92,17 @@ def create_app(service: SAM3Service | None = None) -> FastAPI:
 
 
 app = create_app()
+
+
+def _prompt_summary(frames: list[SegmentFrame]) -> str:
+    text_frames = sum(1 for frame in frames if (frame.text_prompt or "").strip())
+    positive_boxes = sum(len(frame.positive_boxes_xyxy or []) for frame in frames)
+    negative_boxes = sum(len(frame.negative_boxes_xyxy or []) for frame in frames)
+    return (
+        f"text_frames={text_frames} "
+        f"positive_boxes={positive_boxes} "
+        f"negative_boxes={negative_boxes}"
+    )
 
 
 def main() -> None:
