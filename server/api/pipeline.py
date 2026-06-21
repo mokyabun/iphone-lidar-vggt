@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import time
-import shutil
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -14,7 +13,7 @@ from .geometry import bounds, colors_for_depth_pixels, keyframe_indices, unproje
 from .mask import central_object_mask, resize_mask
 from .models import FrameRecord, ReconstructionOptions, ReconstructionResult
 from .ply import write_point_cloud_ply
-from .reconviagen import align_reconviagen_mesh, export_raw_mesh, generate_mesh
+from .reconviagen import align_reconviagen_mesh, export_final_raw_mesh, export_raw_mesh, generate_mesh
 from .sam3 import segment_with_sam3
 from .scan_io import extracted_scan_package, read_confidence, read_depth, read_frames, read_image, write_json
 
@@ -97,21 +96,23 @@ def reconstruct_scan(
             raw_mesh_metrics = export_raw_mesh(raw_mesh, raw_ply, raw_stl)
         if options.enable_lidar_scale_alignment:
             with _timed("align ReconViaGen mesh to LiDAR"):
-                mesh_metrics = align_reconviagen_mesh(raw_mesh, final_ply, preview_glb, print_stl, object_points)
+                mesh_metrics = align_reconviagen_mesh(
+                    raw_mesh,
+                    final_ply,
+                    preview_glb,
+                    print_stl,
+                    object_points,
+                    cleanup_fragments=options.enable_mesh_fragment_cleanup,
+                )
             final_output_source = "reconviagen_lidar_scale"
         else:
             with _timed("use raw ReconViaGen mesh without LiDAR scale alignment"):
-                shutil.copyfile(raw_ply, final_ply)
-                shutil.copyfile(raw_mesh, preview_glb)
-            mesh_metrics = {
-                "alignment_rmse_m": None,
-                "alignment_scale": None,
-                "mesh_vertices": raw_mesh_metrics["raw_mesh_vertices"],
-                "mesh_faces": raw_mesh_metrics["raw_mesh_faces"],
-                "aligned_object_extent_m": None,
-                "print_mesh_watertight": None,
-                "print_stl_output": None,
-            }
+                mesh_metrics = export_final_raw_mesh(
+                    raw_mesh,
+                    final_ply,
+                    preview_glb,
+                    cleanup_fragments=options.enable_mesh_fragment_cleanup,
+                )
             final_output_source = "reconviagen_raw_no_lidar_scale"
 
     object_min, object_max, object_extent = bounds(object_points)
@@ -143,6 +144,7 @@ def reconstruct_scan(
         "sam3_masking_used": sam3_masking_used,
         "mask_source": "sam3" if sam3_masking_used else "depth",
         "lidar_scale_alignment_enabled": options.enable_lidar_scale_alignment,
+        "mesh_fragment_cleanup_enabled": options.enable_mesh_fragment_cleanup,
         "warnings": warnings,
         **raw_mesh_metrics,
         **mesh_metrics,

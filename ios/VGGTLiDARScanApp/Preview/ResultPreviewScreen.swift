@@ -151,6 +151,15 @@ private struct ResultDetailsView: View {
             }
             detailRow("Mesh vertices", formatCount(metrics.meshVertices), systemImage: "point.3.connected.trianglepath.dotted")
             detailRow("Mesh faces", formatCount(metrics.meshFaces), systemImage: "triangleshape.fill")
+            if let cleanupEnabled = metrics.meshFragmentCleanupEnabled {
+                detailRow("Fragment cleanup", cleanupEnabled ? "Enabled" : "Disabled", systemImage: "sparkles")
+            }
+            if let removed = metrics.meshFragmentComponentsRemoved, removed > 0 {
+                detailRow("Fragments removed", formatCount(removed), systemImage: "scissors")
+            }
+            if let facesRemoved = metrics.meshFragmentFacesRemoved, facesRemoved > 0 {
+                detailRow("Faces removed", formatCount(facesRemoved), systemImage: "triangle")
+            }
         }
     }
 

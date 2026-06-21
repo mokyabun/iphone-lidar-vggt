@@ -6,6 +6,7 @@ struct ContentView: View {
     @AppStorage("enableSAM3ObjectMasking") private var enableSAM3ObjectMasking = false
     @AppStorage("sam3TextPrompt") private var sam3TextPrompt = ""
     @AppStorage("enableLiDARScaleAlignment") private var enableLiDARScaleAlignment = true
+    @AppStorage("enableMeshFragmentCleanup") private var enableMeshFragmentCleanup = true
     @State private var showResult = false
     @State private var showSettings = false
 
@@ -34,6 +35,7 @@ struct ContentView: View {
                 enableSAM3ObjectMasking: $enableSAM3ObjectMasking,
                 sam3TextPrompt: $sam3TextPrompt,
                 enableLiDARScaleAlignment: $enableLiDARScaleAlignment,
+                enableMeshFragmentCleanup: $enableMeshFragmentCleanup,
                 scanner: scanner,
                 refresh: refreshBackend
             )
@@ -92,6 +94,7 @@ struct ContentView: View {
                                 options: BackendReconstructionOptions(
                                     enableSAM3ObjectMasking: enableSAM3ObjectMasking,
                                     enableLiDARScaleAlignment: enableLiDARScaleAlignment,
+                                    enableMeshFragmentCleanup: enableMeshFragmentCleanup,
                                     sam3TextPrompt: sam3TextPrompt
                                 )
                             )

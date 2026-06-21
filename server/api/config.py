@@ -53,6 +53,9 @@ class Settings:
     alignment_samples: int = env_int("ALIGNMENT_SAMPLES", 6000)
     icp_iterations: int = env_int("ALIGNMENT_ICP_ITERATIONS", 8)
     print_stl: bool = env_bool("EXPORT_PRINT_STL", True)
+    mesh_cleanup_min_component_faces: int = env_int("MESH_CLEANUP_MIN_COMPONENT_FACES", 8)
+    mesh_cleanup_min_component_face_ratio: float = env_float("MESH_CLEANUP_MIN_COMPONENT_FACE_RATIO", 0.0)
+    mesh_cleanup_max_components: int = env_int("MESH_CLEANUP_MAX_COMPONENTS", 0)
 
 
 def settings() -> Settings:

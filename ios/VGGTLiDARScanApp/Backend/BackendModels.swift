@@ -72,6 +72,7 @@ struct BackendReconstructionResult {
 struct BackendReconstructionOptions {
     var enableSAM3ObjectMasking: Bool
     var enableLiDARScaleAlignment: Bool
+    var enableMeshFragmentCleanup: Bool
     var sam3TextPrompt: String
 }
 
@@ -138,6 +139,11 @@ struct BackendMetrics: Decodable {
     let sam3MaskingUsed: Bool?
     let maskSource: String?
     let lidarScaleAlignmentEnabled: Bool?
+    let meshFragmentCleanupEnabled: Bool?
+    let meshFragmentComponentsBefore: Int?
+    let meshFragmentComponentsAfter: Int?
+    let meshFragmentComponentsRemoved: Int?
+    let meshFragmentFacesRemoved: Int?
     let rawMeshOutput: String?
     let rawPlyOutput: String?
     let rawStlOutput: String?

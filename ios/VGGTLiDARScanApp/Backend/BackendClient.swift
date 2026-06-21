@@ -22,7 +22,7 @@ struct BackendClient {
     }
 
     private func submitJob(packageURL: URL, options: BackendReconstructionOptions) async throws -> BackendJobSubmission {
-        var components = URLComponents(url: baseURL.appendingPathComponent("jobs"), resolvingAgainstBaseURL: false)
+        let components = URLComponents(url: baseURL.appendingPathComponent("jobs"), resolvingAgainstBaseURL: false)
         guard let url = components?.url else {
             throw URLError(.badURL)
         }
@@ -52,6 +52,11 @@ struct BackendClient {
         body.appendFormField(
             name: "enable_lidar_scale_alignment",
             value: options.enableLiDARScaleAlignment ? "true" : "false",
+            boundary: boundary
+        )
+        body.appendFormField(
+            name: "enable_mesh_fragment_cleanup",
+            value: options.enableMeshFragmentCleanup ? "true" : "false",
             boundary: boundary
         )
         body.appendString("--\(boundary)--\r\n")

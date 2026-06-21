@@ -54,6 +54,7 @@ def align_reconviagen_mesh(
     preview_glb: Path,
     print_stl: Path,
     lidar_points: np.ndarray,
+    cleanup_fragments: bool = True,
 ) -> dict[str, object]:
     loaded = trimesh.load(raw_mesh_path, force="scene")
     mesh = _scene_to_mesh(loaded)
@@ -72,6 +73,7 @@ def align_reconviagen_mesh(
     vertices += _center_on_reference(vertices, lidar_points)
     mesh.vertices = vertices
     _clean_mesh(mesh)
+    mesh, cleanup_metrics = _remove_small_components(mesh, cleanup_fragments)
 
     output_ply.parent.mkdir(parents=True, exist_ok=True)
     mesh.export(output_ply, file_type="ply")
@@ -92,6 +94,35 @@ def align_reconviagen_mesh(
         "aligned_object_extent_m": _robust_extent(np.asarray(mesh.vertices)).round(5).tolist(),
         "print_mesh_watertight": watertight,
         "print_stl_output": print_path,
+        **cleanup_metrics,
+    }
+
+
+def export_final_raw_mesh(
+    raw_mesh_path: Path,
+    output_ply: Path,
+    preview_glb: Path,
+    cleanup_fragments: bool = True,
+) -> dict[str, object]:
+    loaded = trimesh.load(raw_mesh_path, force="scene")
+    mesh = _scene_to_mesh(loaded)
+    if mesh.vertices.shape[0] < 3 or mesh.faces.shape[0] < 1:
+        raise RuntimeError("ReconViaGen output mesh was empty.")
+    _clean_mesh(mesh)
+    mesh, cleanup_metrics = _remove_small_components(mesh, cleanup_fragments)
+
+    output_ply.parent.mkdir(parents=True, exist_ok=True)
+    mesh.export(output_ply, file_type="ply")
+    mesh.export(preview_glb, file_type="glb")
+    return {
+        "alignment_rmse_m": None,
+        "alignment_scale": None,
+        "mesh_vertices": int(mesh.vertices.shape[0]),
+        "mesh_faces": int(mesh.faces.shape[0]),
+        "aligned_object_extent_m": None,
+        "print_mesh_watertight": None,
+        "print_stl_output": None,
+        **cleanup_metrics,
     }
 
 
@@ -300,6 +331,68 @@ def _clean_mesh(mesh: trimesh.Trimesh) -> None:
         mesh.fix_normals()
     except Exception:
         pass
+
+
+def _remove_small_components(mesh: trimesh.Trimesh, enabled: bool) -> tuple[trimesh.Trimesh, dict[str, object]]:
+    cfg = settings()
+    stats: dict[str, object] = {
+        "mesh_fragment_cleanup_enabled": bool(enabled),
+        "mesh_fragment_cleanup_min_faces": int(cfg.mesh_cleanup_min_component_faces),
+        "mesh_fragment_cleanup_min_face_ratio": float(cfg.mesh_cleanup_min_component_face_ratio),
+        "mesh_fragment_components_before": 1,
+        "mesh_fragment_components_after": 1,
+        "mesh_fragment_components_removed": 0,
+        "mesh_fragment_faces_removed": 0,
+        "mesh_fragment_vertices_removed": 0,
+        "mesh_fragment_component_faces": [int(mesh.faces.shape[0])],
+    }
+    if not enabled:
+        return mesh, stats
+    try:
+        labels = trimesh.graph.connected_component_labels(mesh.face_adjacency, node_count=len(mesh.faces))
+    except Exception as exc:
+        stats["mesh_fragment_cleanup_error"] = f"{type(exc).__name__}: {exc}"
+        return mesh, stats
+    if labels.size == 0:
+        stats["mesh_fragment_cleanup_error"] = "component labeling returned no faces"
+        return mesh, stats
+
+    component_faces = np.bincount(labels)
+    stats["mesh_fragment_components_before"] = int(component_faces.shape[0])
+    stats["mesh_fragment_component_faces"] = [int(value) for value in sorted(component_faces, reverse=True)[:16]]
+    if component_faces.shape[0] == 1:
+        return mesh, stats
+
+    largest_faces = int(component_faces.max())
+    min_faces = max(1, int(cfg.mesh_cleanup_min_component_faces))
+    min_ratio = max(0.0, float(cfg.mesh_cleanup_min_component_face_ratio))
+    face_threshold = max(min_faces, int(np.ceil(largest_faces * min_ratio)))
+    max_components = max(0, int(cfg.mesh_cleanup_max_components))
+    keep_labels = np.flatnonzero(component_faces >= face_threshold)
+    if max_components > 0 and keep_labels.shape[0] > max_components:
+        keep_order = np.argsort(component_faces[keep_labels])[::-1][:max_components]
+        keep_labels = keep_labels[keep_order]
+    if keep_labels.shape[0] == 0:
+        keep_labels = np.array([int(component_faces.argmax())], dtype=np.int64)
+
+    keep_faces = np.isin(labels, keep_labels)
+    kept_faces = int(keep_faces.sum())
+    before_faces = int(mesh.faces.shape[0])
+    before_vertices = int(mesh.vertices.shape[0])
+    if keep_labels.shape[0] == component_faces.shape[0] and kept_faces == before_faces:
+        return mesh, stats
+
+    cleaned = mesh.submesh([keep_faces], append=True, repair=False)
+    _clean_mesh(cleaned)
+    stats["mesh_fragment_components_after"] = int(keep_labels.shape[0])
+    stats["mesh_fragment_components_removed"] = int(component_faces.shape[0] - keep_labels.shape[0])
+    stats["mesh_fragment_faces_removed"] = max(0, before_faces - int(cleaned.faces.shape[0]))
+    stats["mesh_fragment_vertices_removed"] = max(0, before_vertices - int(cleaned.vertices.shape[0]))
+    stats["mesh_fragment_cleanup_face_threshold"] = face_threshold
+    stats["mesh_fragment_kept_component_faces"] = [
+        int(value) for value in sorted(component_faces[keep_labels].tolist(), reverse=True)[:16]
+    ]
+    return cleaned, stats
 
 
 def _write_mock_mesh(output_path: Path) -> None:
