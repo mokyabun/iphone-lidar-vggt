@@ -56,6 +56,13 @@ class Settings:
     mesh_cleanup_min_component_faces: int = env_int("MESH_CLEANUP_MIN_COMPONENT_FACES", 8)
     mesh_cleanup_min_component_face_ratio: float = env_float("MESH_CLEANUP_MIN_COMPONENT_FACE_RATIO", 0.0)
     mesh_cleanup_max_components: int = env_int("MESH_CLEANUP_MAX_COMPONENTS", 0)
+    mesh_floor_trim_min_faces: int = env_int("MESH_FLOOR_TRIM_MIN_FACES", 700)
+    mesh_floor_trim_bottom_fraction: float = env_float("MESH_FLOOR_TRIM_BOTTOM_FRACTION", 0.35)
+    mesh_floor_trim_top_fraction: float = env_float("MESH_FLOOR_TRIM_TOP_FRACTION", 0.65)
+    mesh_floor_trim_max_thickness_fraction: float = env_float("MESH_FLOOR_TRIM_MAX_THICKNESS_FRACTION", 0.35)
+    mesh_floor_trim_min_normal_y: float = env_float("MESH_FLOOR_TRIM_MIN_NORMAL_Y", 0.82)
+    mesh_floor_trim_min_footprint_ratio: float = env_float("MESH_FLOOR_TRIM_MIN_FOOTPRINT_RATIO", 0.04)
+    mesh_floor_trim_max_remove_face_ratio: float = env_float("MESH_FLOOR_TRIM_MAX_REMOVE_FACE_RATIO", 0.35)
 
 
 def settings() -> Settings:

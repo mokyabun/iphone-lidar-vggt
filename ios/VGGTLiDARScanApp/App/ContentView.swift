@@ -7,6 +7,7 @@ struct ContentView: View {
     @AppStorage("sam3TextPrompt") private var sam3TextPrompt = ""
     @AppStorage("enableLiDARScaleAlignment") private var enableLiDARScaleAlignment = true
     @AppStorage("enableMeshFragmentCleanup") private var enableMeshFragmentCleanup = true
+    @AppStorage("enableFloorSheetTrim") private var enableFloorSheetTrim = false
     @State private var showResult = false
     @State private var showSettings = false
 
@@ -36,6 +37,7 @@ struct ContentView: View {
                 sam3TextPrompt: $sam3TextPrompt,
                 enableLiDARScaleAlignment: $enableLiDARScaleAlignment,
                 enableMeshFragmentCleanup: $enableMeshFragmentCleanup,
+                enableFloorSheetTrim: $enableFloorSheetTrim,
                 scanner: scanner,
                 refresh: refreshBackend
             )
@@ -95,6 +97,7 @@ struct ContentView: View {
                                     enableSAM3ObjectMasking: enableSAM3ObjectMasking,
                                     enableLiDARScaleAlignment: enableLiDARScaleAlignment,
                                     enableMeshFragmentCleanup: enableMeshFragmentCleanup,
+                                    enableFloorSheetTrim: enableFloorSheetTrim,
                                     sam3TextPrompt: sam3TextPrompt
                                 )
                             )

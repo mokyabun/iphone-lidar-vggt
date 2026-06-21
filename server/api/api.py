@@ -57,12 +57,14 @@ def create_job(
     enable_sam3_object_masking: bool = Form(False),
     enable_lidar_scale_alignment: bool = Form(True),
     enable_mesh_fragment_cleanup: bool = Form(True),
+    enable_floor_sheet_trim: bool = Form(False),
     sam3_text_prompt: str = Form(""),
 ) -> dict[str, object]:
     options = ReconstructionOptions(
         enable_sam3_object_masking=enable_sam3_object_masking,
         enable_lidar_scale_alignment=enable_lidar_scale_alignment,
         enable_mesh_fragment_cleanup=enable_mesh_fragment_cleanup,
+        enable_floor_sheet_trim=enable_floor_sheet_trim,
         sam3_text_prompt=sam3_text_prompt.strip(),
     )
     job_id, job_dir, package_path = _store_upload(scan_package)
@@ -79,12 +81,14 @@ def reconstruct_now(
     enable_sam3_object_masking: bool = Form(False),
     enable_lidar_scale_alignment: bool = Form(True),
     enable_mesh_fragment_cleanup: bool = Form(True),
+    enable_floor_sheet_trim: bool = Form(False),
     sam3_text_prompt: str = Form(""),
 ) -> FileResponse:
     options = ReconstructionOptions(
         enable_sam3_object_masking=enable_sam3_object_masking,
         enable_lidar_scale_alignment=enable_lidar_scale_alignment,
         enable_mesh_fragment_cleanup=enable_mesh_fragment_cleanup,
+        enable_floor_sheet_trim=enable_floor_sheet_trim,
         sam3_text_prompt=sam3_text_prompt.strip(),
     )
     job_id, job_dir, package_path = _store_upload(scan_package)

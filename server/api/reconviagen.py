@@ -55,6 +55,7 @@ def align_reconviagen_mesh(
     print_stl: Path,
     lidar_points: np.ndarray,
     cleanup_fragments: bool = True,
+    trim_floor_sheets: bool = False,
 ) -> dict[str, object]:
     loaded = trimesh.load(raw_mesh_path, force="scene")
     mesh = _scene_to_mesh(loaded)
@@ -74,6 +75,7 @@ def align_reconviagen_mesh(
     mesh.vertices = vertices
     _clean_mesh(mesh)
     mesh, cleanup_metrics = _remove_small_components(mesh, cleanup_fragments)
+    mesh, floor_metrics = _remove_floor_sheets(mesh, trim_floor_sheets)
 
     output_ply.parent.mkdir(parents=True, exist_ok=True)
     mesh.export(output_ply, file_type="ply")
@@ -95,6 +97,7 @@ def align_reconviagen_mesh(
         "print_mesh_watertight": watertight,
         "print_stl_output": print_path,
         **cleanup_metrics,
+        **floor_metrics,
     }
 
 
@@ -103,6 +106,7 @@ def export_final_raw_mesh(
     output_ply: Path,
     preview_glb: Path,
     cleanup_fragments: bool = True,
+    trim_floor_sheets: bool = False,
 ) -> dict[str, object]:
     loaded = trimesh.load(raw_mesh_path, force="scene")
     mesh = _scene_to_mesh(loaded)
@@ -110,6 +114,7 @@ def export_final_raw_mesh(
         raise RuntimeError("ReconViaGen output mesh was empty.")
     _clean_mesh(mesh)
     mesh, cleanup_metrics = _remove_small_components(mesh, cleanup_fragments)
+    mesh, floor_metrics = _remove_floor_sheets(mesh, trim_floor_sheets)
 
     output_ply.parent.mkdir(parents=True, exist_ok=True)
     mesh.export(output_ply, file_type="ply")
@@ -123,6 +128,7 @@ def export_final_raw_mesh(
         "print_mesh_watertight": None,
         "print_stl_output": None,
         **cleanup_metrics,
+        **floor_metrics,
     }
 
 
@@ -392,6 +398,115 @@ def _remove_small_components(mesh: trimesh.Trimesh, enabled: bool) -> tuple[trim
     stats["mesh_fragment_kept_component_faces"] = [
         int(value) for value in sorted(component_faces[keep_labels].tolist(), reverse=True)[:16]
     ]
+    return cleaned, stats
+
+
+def _remove_floor_sheets(mesh: trimesh.Trimesh, enabled: bool) -> tuple[trimesh.Trimesh, dict[str, object]]:
+    cfg = settings()
+    stats: dict[str, object] = {
+        "mesh_floor_sheet_trim_enabled": bool(enabled),
+        "mesh_floor_sheet_trim_min_faces": int(cfg.mesh_floor_trim_min_faces),
+        "mesh_floor_sheet_trim_bottom_fraction": float(cfg.mesh_floor_trim_bottom_fraction),
+        "mesh_floor_sheet_trim_top_fraction": float(cfg.mesh_floor_trim_top_fraction),
+        "mesh_floor_sheet_trim_max_thickness_fraction": float(cfg.mesh_floor_trim_max_thickness_fraction),
+        "mesh_floor_sheet_trim_min_normal_y": float(cfg.mesh_floor_trim_min_normal_y),
+        "mesh_floor_sheet_trim_min_footprint_ratio": float(cfg.mesh_floor_trim_min_footprint_ratio),
+        "mesh_floor_sheet_trim_max_remove_face_ratio": float(cfg.mesh_floor_trim_max_remove_face_ratio),
+        "mesh_floor_sheet_candidates": 0,
+        "mesh_floor_sheet_components_removed": 0,
+        "mesh_floor_sheet_faces_removed": 0,
+        "mesh_floor_sheet_vertices_removed": 0,
+        "mesh_floor_sheet_removed_component_faces": [],
+    }
+    if not enabled:
+        return mesh, stats
+    vertices = np.asarray(mesh.vertices)
+    faces = np.asarray(mesh.faces)
+    if vertices.shape[0] < 3 or faces.shape[0] < 1:
+        stats["mesh_floor_sheet_trim_skipped_reason"] = "empty mesh"
+        return mesh, stats
+    try:
+        labels = trimesh.graph.connected_component_labels(mesh.face_adjacency, node_count=len(mesh.faces))
+    except Exception as exc:
+        stats["mesh_floor_sheet_trim_skipped_reason"] = f"{type(exc).__name__}: {exc}"
+        return mesh, stats
+    if labels.size == 0:
+        stats["mesh_floor_sheet_trim_skipped_reason"] = "component labeling returned no faces"
+        return mesh, stats
+
+    mesh_min = vertices.min(axis=0)
+    mesh_max = vertices.max(axis=0)
+    mesh_extent = np.maximum(mesh_max - mesh_min, 1e-9)
+    mesh_footprint_area = max(float(mesh_extent[0] * mesh_extent[2]), 1e-9)
+    min_faces = max(1, int(cfg.mesh_floor_trim_min_faces))
+    bottom_limit = float(mesh_min[1] + mesh_extent[1] * max(0.0, cfg.mesh_floor_trim_bottom_fraction))
+    top_limit = float(mesh_min[1] + mesh_extent[1] * max(0.0, cfg.mesh_floor_trim_top_fraction))
+    max_thickness = float(mesh_extent[1] * max(0.0, cfg.mesh_floor_trim_max_thickness_fraction))
+    min_normal_y = min(max(float(cfg.mesh_floor_trim_min_normal_y), 0.0), 1.0)
+    min_footprint_ratio = max(0.0, float(cfg.mesh_floor_trim_min_footprint_ratio))
+
+    component_faces = np.bincount(labels)
+    remove_labels: list[int] = []
+    removed_component_faces: list[int] = []
+    candidate_summaries: list[dict[str, object]] = []
+    for label, face_count in enumerate(component_faces):
+        if int(face_count) < min_faces:
+            continue
+        face_indices = np.flatnonzero(labels == label)
+        component_vertices = vertices[np.unique(faces[face_indices].reshape(-1))]
+        component_min = component_vertices.min(axis=0)
+        component_max = component_vertices.max(axis=0)
+        component_extent = component_max - component_min
+        footprint_ratio = float((component_extent[0] * component_extent[2]) / mesh_footprint_area)
+        normal_y = float(np.mean(np.abs(np.asarray(mesh.face_normals)[face_indices, 1])))
+        is_floor_sheet = (
+            component_min[1] <= bottom_limit
+            and component_max[1] <= top_limit
+            and component_extent[1] <= max_thickness
+            and normal_y >= min_normal_y
+            and footprint_ratio >= min_footprint_ratio
+        )
+        if not is_floor_sheet:
+            continue
+        remove_labels.append(int(label))
+        removed_component_faces.append(int(face_count))
+        if len(candidate_summaries) < 16:
+            candidate_summaries.append(
+                {
+                    "faces": int(face_count),
+                    "normal_y": round(normal_y, 4),
+                    "footprint_ratio": round(footprint_ratio, 4),
+                    "extent": np.round(component_extent, 5).tolist(),
+                    "min_y": round(float(component_min[1]), 5),
+                    "max_y": round(float(component_max[1]), 5),
+                }
+            )
+
+    stats["mesh_floor_sheet_candidates"] = len(remove_labels)
+    stats["mesh_floor_sheet_removed_component_faces"] = sorted(removed_component_faces, reverse=True)[:16]
+    stats["mesh_floor_sheet_candidate_summaries"] = candidate_summaries
+    if not remove_labels:
+        stats["mesh_floor_sheet_trim_skipped_reason"] = "no floor-like sheet components"
+        return mesh, stats
+
+    remove_faces = np.isin(labels, np.asarray(remove_labels, dtype=np.int64))
+    remove_face_count = int(remove_faces.sum())
+    max_remove_ratio = min(max(float(cfg.mesh_floor_trim_max_remove_face_ratio), 0.0), 1.0)
+    if remove_face_count > int(mesh.faces.shape[0] * max_remove_ratio):
+        stats["mesh_floor_sheet_trim_skipped_reason"] = "candidate face ratio exceeded safety limit"
+        return mesh, stats
+
+    keep_faces = ~remove_faces
+    if int(keep_faces.sum()) < max(12, int(mesh.faces.shape[0] * 0.25)):
+        stats["mesh_floor_sheet_trim_skipped_reason"] = "too few faces would remain"
+        return mesh, stats
+
+    before_vertices = int(mesh.vertices.shape[0])
+    cleaned = mesh.submesh([keep_faces], append=True, repair=False)
+    _clean_mesh(cleaned)
+    stats["mesh_floor_sheet_components_removed"] = len(remove_labels)
+    stats["mesh_floor_sheet_faces_removed"] = max(0, int(mesh.faces.shape[0]) - int(cleaned.faces.shape[0]))
+    stats["mesh_floor_sheet_vertices_removed"] = max(0, before_vertices - int(cleaned.vertices.shape[0]))
     return cleaned, stats
 
 

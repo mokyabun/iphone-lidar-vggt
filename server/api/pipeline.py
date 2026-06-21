@@ -103,6 +103,7 @@ def reconstruct_scan(
                     print_stl,
                     object_points,
                     cleanup_fragments=options.enable_mesh_fragment_cleanup,
+                    trim_floor_sheets=options.enable_floor_sheet_trim,
                 )
             final_output_source = "reconviagen_lidar_scale"
         else:
@@ -112,6 +113,7 @@ def reconstruct_scan(
                     final_ply,
                     preview_glb,
                     cleanup_fragments=options.enable_mesh_fragment_cleanup,
+                    trim_floor_sheets=options.enable_floor_sheet_trim,
                 )
             final_output_source = "reconviagen_raw_no_lidar_scale"
 
@@ -145,6 +147,7 @@ def reconstruct_scan(
         "mask_source": "sam3" if sam3_masking_used else "depth",
         "lidar_scale_alignment_enabled": options.enable_lidar_scale_alignment,
         "mesh_fragment_cleanup_enabled": options.enable_mesh_fragment_cleanup,
+        "floor_sheet_trim_enabled": options.enable_floor_sheet_trim,
         "warnings": warnings,
         **raw_mesh_metrics,
         **mesh_metrics,

@@ -32,4 +32,5 @@ class ReconstructionOptions:
     enable_sam3_object_masking: bool = False
     enable_lidar_scale_alignment: bool = True
     enable_mesh_fragment_cleanup: bool = True
+    enable_floor_sheet_trim: bool = False
     sam3_text_prompt: str = ""

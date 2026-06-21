@@ -6,6 +6,7 @@ struct BackendSettingsView: View {
     @Binding var sam3TextPrompt: String
     @Binding var enableLiDARScaleAlignment: Bool
     @Binding var enableMeshFragmentCleanup: Bool
+    @Binding var enableFloorSheetTrim: Bool
     @ObservedObject var scanner: ScanSessionManager
     let refresh: () async -> Void
     @Environment(\.dismiss) private var dismiss
@@ -66,6 +67,9 @@ struct BackendSettingsView: View {
                     }
                     Toggle(isOn: $enableMeshFragmentCleanup) {
                         Label("Mesh fragment cleanup", systemImage: "sparkles")
+                    }
+                    Toggle(isOn: $enableFloorSheetTrim) {
+                        Label("Floor sheet trim", systemImage: "rectangle.dashed")
                     }
                     if let capability = scanner.backendCapabilities?.features?.lidarScaleAlignment {
                         capabilityRow("Scale layer", capability: capability)

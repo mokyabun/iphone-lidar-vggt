@@ -59,6 +59,11 @@ struct BackendClient {
             value: options.enableMeshFragmentCleanup ? "true" : "false",
             boundary: boundary
         )
+        body.appendFormField(
+            name: "enable_floor_sheet_trim",
+            value: options.enableFloorSheetTrim ? "true" : "false",
+            boundary: boundary
+        )
         body.appendString("--\(boundary)--\r\n")
 
         let configuration = URLSessionConfiguration.default

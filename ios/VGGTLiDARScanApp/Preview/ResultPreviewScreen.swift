@@ -160,6 +160,15 @@ private struct ResultDetailsView: View {
             if let facesRemoved = metrics.meshFragmentFacesRemoved, facesRemoved > 0 {
                 detailRow("Faces removed", formatCount(facesRemoved), systemImage: "triangle")
             }
+            if let trimEnabled = metrics.floorSheetTrimEnabled {
+                detailRow("Floor trim", trimEnabled ? "Enabled" : "Disabled", systemImage: "rectangle.dashed")
+            }
+            if let removed = metrics.meshFloorSheetComponentsRemoved, removed > 0 {
+                detailRow("Floor sheets removed", formatCount(removed), systemImage: "scissors")
+            }
+            if let facesRemoved = metrics.meshFloorSheetFacesRemoved, facesRemoved > 0 {
+                detailRow("Floor faces removed", formatCount(facesRemoved), systemImage: "rectangle")
+            }
         }
     }
 

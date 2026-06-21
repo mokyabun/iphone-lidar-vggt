@@ -5,6 +5,7 @@ const sam3PromptRow = document.querySelector("#sam3PromptRow");
 const sam3TextPrompt = document.querySelector("#sam3TextPrompt");
 const lidarScaleAlignment = document.querySelector("#lidarScaleAlignment");
 const meshFragmentCleanup = document.querySelector("#meshFragmentCleanup");
+const floorSheetTrim = document.querySelector("#floorSheetTrim");
 const dropZone = document.querySelector("#dropZone");
 const fileName = document.querySelector("#fileName");
 const submitButton = document.querySelector("#submitButton");
@@ -107,6 +108,7 @@ async function startJob(file) {
   body.append("sam3_text_prompt", sam3Masking.checked ? sam3TextPrompt.value.trim() : "");
   body.append("enable_lidar_scale_alignment", lidarScaleAlignment.checked ? "true" : "false");
   body.append("enable_mesh_fragment_cleanup", meshFragmentCleanup.checked ? "true" : "false");
+  body.append("enable_floor_sheet_trim", floorSheetTrim.checked ? "true" : "false");
 
   submitButton.disabled = true;
   downloads.hidden = true;
@@ -116,6 +118,7 @@ async function startJob(file) {
     sam3_text_prompt: sam3Masking.checked ? sam3TextPrompt.value.trim() : "",
     enable_lidar_scale_alignment: lidarScaleAlignment.checked,
     enable_mesh_fragment_cleanup: meshFragmentCleanup.checked,
+    enable_floor_sheet_trim: floorSheetTrim.checked,
   });
 
   const response = await fetch("/jobs", {
