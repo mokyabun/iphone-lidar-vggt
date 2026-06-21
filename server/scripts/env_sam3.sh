@@ -18,6 +18,8 @@ export SAM3_REPO_REF="${SAM3_REPO_REF:-main}"
 export SAM3_REPO_DIR="${SAM3_REPO_DIR:-${APP_CACHE_ROOT}/sam3}"
 export SAM3_TORCH_INDEX_URL="${SAM3_TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu128}"
 export SAM3_TORCH_SPEC="${SAM3_TORCH_SPEC:-torch==2.10.0 torchvision}"
+export SAM3_EXTRAS="${SAM3_EXTRAS:-train,dev}"
+export SAM3_INSTALL_LIGHT_INFERENCE_DEPS="${SAM3_INSTALL_LIGHT_INFERENCE_DEPS:-1}"
 export SAM3_INSTALL_FAST_DEPS="${SAM3_INSTALL_FAST_DEPS:-0}"
 
 requirements_file="${SERVER_DIR}/sam3_worker/requirements.txt"
@@ -51,6 +53,8 @@ spec_stamp() {
     printf 'repo_ref=%s\n' "${SAM3_REPO_REF}"
     printf 'torch_index=%s\n' "${SAM3_TORCH_INDEX_URL}"
     printf 'torch_spec=%s\n' "${SAM3_TORCH_SPEC}"
+    printf 'extras=%s\n' "${SAM3_EXTRAS}"
+    printf 'light_deps=%s\n' "${SAM3_INSTALL_LIGHT_INFERENCE_DEPS}"
     printf 'fast_deps=%s\n' "${SAM3_INSTALL_FAST_DEPS}"
     cat "${requirements_file}"
   } | cksum | awk '{print $1}'
@@ -74,12 +78,21 @@ log "Installing SAM3 worker base packages from ${requirements_file}."
 mm_pip "${SAM3_ENV_DIR}" install -r "${requirements_file}"
 log "Installing SAM3 torch packages from ${SAM3_TORCH_INDEX_URL}: ${SAM3_TORCH_SPEC}."
 mm_pip "${SAM3_ENV_DIR}" install ${SAM3_TORCH_SPEC} --index-url "${SAM3_TORCH_INDEX_URL}"
-log "Installing SAM3 package from ${SAM3_REPO_DIR}."
-mm_pip "${SAM3_ENV_DIR}" install -e "${SAM3_REPO_DIR}"
+if [ -n "${SAM3_EXTRAS}" ]; then
+  log "Installing SAM3 package from ${SAM3_REPO_DIR} with extras [${SAM3_EXTRAS}]."
+  mm_pip "${SAM3_ENV_DIR}" install -e "${SAM3_REPO_DIR}[${SAM3_EXTRAS}]"
+else
+  log "Installing SAM3 package from ${SAM3_REPO_DIR}."
+  mm_pip "${SAM3_ENV_DIR}" install -e "${SAM3_REPO_DIR}"
+fi
+
+if is_enabled "${SAM3_INSTALL_LIGHT_INFERENCE_DEPS}"; then
+  log "Installing SAM3 lightweight inference dependencies."
+  mm_pip "${SAM3_ENV_DIR}" install einops ninja psutil
+fi
 
 if is_enabled "${SAM3_INSTALL_FAST_DEPS}"; then
   log "Installing optional SAM3 fast inference dependencies."
-  mm_pip "${SAM3_ENV_DIR}" install einops ninja
   mm_pip "${SAM3_ENV_DIR}" install flash-attn-3 --no-deps --index-url "${SAM3_TORCH_INDEX_URL}"
   mm_pip "${SAM3_ENV_DIR}" install git+https://github.com/ronghanghu/cc_torch.git
 fi

@@ -43,10 +43,14 @@ class SAM3Service:
         if self.settings.require_cuda and not torch.cuda.is_available():
             raise RuntimeError("CUDA is required for SAM3, but PyTorch cannot use it.")
 
-        sam3_root = Path(sam3.__file__).resolve().parent.parent
-        bpe_path = sam3_root / "assets" / "bpe_simple_vocab_16e6.txt.gz"
-        if not bpe_path.exists():
-            bpe_path = repo_dir / "assets" / "bpe_simple_vocab_16e6.txt.gz"
+        sam3_package_root = Path(sam3.__file__).resolve().parent
+        bpe_candidates = (
+            sam3_package_root / "assets" / "bpe_simple_vocab_16e6.txt.gz",
+            sam3_package_root.parent / "assets" / "bpe_simple_vocab_16e6.txt.gz",
+            repo_dir / "sam3" / "assets" / "bpe_simple_vocab_16e6.txt.gz",
+            repo_dir / "assets" / "bpe_simple_vocab_16e6.txt.gz",
+        )
+        bpe_path = next((path for path in bpe_candidates if path.exists()), bpe_candidates[0])
         _log(f"loading SAM3 image model bpe_path={bpe_path}")
         model = build_sam3_image_model(bpe_path=str(bpe_path))
         self.torch = torch
