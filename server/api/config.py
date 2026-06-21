@@ -56,6 +56,15 @@ class Settings:
     mesh_cleanup_min_component_faces: int = env_int("MESH_CLEANUP_MIN_COMPONENT_FACES", 8)
     mesh_cleanup_min_component_face_ratio: float = env_float("MESH_CLEANUP_MIN_COMPONENT_FACE_RATIO", 0.0)
     mesh_cleanup_max_components: int = env_int("MESH_CLEANUP_MAX_COMPONENTS", 0)
+    mesh_post_floor_cleanup_min_component_faces: int = env_int("MESH_POST_FLOOR_CLEANUP_MIN_COMPONENT_FACES", 8)
+    mesh_post_floor_cleanup_bottom_fraction: float = env_float("MESH_POST_FLOOR_CLEANUP_BOTTOM_FRACTION", 0.12)
+    mesh_post_floor_cleanup_max_thickness_fraction: float = env_float(
+        "MESH_POST_FLOOR_CLEANUP_MAX_THICKNESS_FRACTION", 0.07
+    )
+    mesh_post_floor_cleanup_min_normal_y: float = env_float("MESH_POST_FLOOR_CLEANUP_MIN_NORMAL_Y", 0.75)
+    mesh_post_floor_cleanup_max_remove_face_ratio: float = env_float(
+        "MESH_POST_FLOOR_CLEANUP_MAX_REMOVE_FACE_RATIO", 0.3
+    )
     mesh_floor_trim_min_faces: int = env_int("MESH_FLOOR_TRIM_MIN_FACES", 700)
     mesh_floor_trim_bottom_fraction: float = env_float("MESH_FLOOR_TRIM_BOTTOM_FRACTION", 0.35)
     mesh_floor_trim_top_fraction: float = env_float("MESH_FLOOR_TRIM_TOP_FRACTION", 0.65)

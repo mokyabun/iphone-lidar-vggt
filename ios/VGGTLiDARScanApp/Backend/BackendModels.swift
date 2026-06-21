@@ -149,6 +149,8 @@ struct BackendMetrics: Decodable {
     let meshFloorSheetCandidates: Int?
     let meshFloorSheetComponentsRemoved: Int?
     let meshFloorSheetFacesRemoved: Int?
+    let postFloorMeshFragmentComponentsRemoved: Int?
+    let postFloorMeshFragmentFacesRemoved: Int?
     let rawMeshOutput: String?
     let rawPlyOutput: String?
     let rawStlOutput: String?

@@ -169,6 +169,12 @@ private struct ResultDetailsView: View {
             if let facesRemoved = metrics.meshFloorSheetFacesRemoved, facesRemoved > 0 {
                 detailRow("Floor faces removed", formatCount(facesRemoved), systemImage: "rectangle")
             }
+            if let removed = metrics.postFloorMeshFragmentComponentsRemoved, removed > 0 {
+                detailRow("Post-floor fragments", formatCount(removed), systemImage: "wand.and.stars")
+            }
+            if let facesRemoved = metrics.postFloorMeshFragmentFacesRemoved, facesRemoved > 0 {
+                detailRow("Post-floor faces", formatCount(facesRemoved), systemImage: "triangle")
+            }
         }
     }
 

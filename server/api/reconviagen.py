@@ -76,6 +76,9 @@ def align_reconviagen_mesh(
     _clean_mesh(mesh)
     mesh, cleanup_metrics = _remove_small_components(mesh, cleanup_fragments)
     mesh, floor_metrics = _remove_floor_sheets(mesh, trim_floor_sheets)
+    mesh, post_floor_cleanup_metrics = _remove_post_floor_fragments(
+        mesh, cleanup_fragments, trim_floor_sheets, floor_metrics
+    )
 
     output_ply.parent.mkdir(parents=True, exist_ok=True)
     mesh.export(output_ply, file_type="ply")
@@ -98,6 +101,7 @@ def align_reconviagen_mesh(
         "print_stl_output": print_path,
         **cleanup_metrics,
         **floor_metrics,
+        **post_floor_cleanup_metrics,
     }
 
 
@@ -115,6 +119,9 @@ def export_final_raw_mesh(
     _clean_mesh(mesh)
     mesh, cleanup_metrics = _remove_small_components(mesh, cleanup_fragments)
     mesh, floor_metrics = _remove_floor_sheets(mesh, trim_floor_sheets)
+    mesh, post_floor_cleanup_metrics = _remove_post_floor_fragments(
+        mesh, cleanup_fragments, trim_floor_sheets, floor_metrics
+    )
 
     output_ply.parent.mkdir(parents=True, exist_ok=True)
     mesh.export(output_ply, file_type="ply")
@@ -129,6 +136,7 @@ def export_final_raw_mesh(
         "print_stl_output": None,
         **cleanup_metrics,
         **floor_metrics,
+        **post_floor_cleanup_metrics,
     }
 
 
@@ -339,12 +347,24 @@ def _clean_mesh(mesh: trimesh.Trimesh) -> None:
         pass
 
 
-def _remove_small_components(mesh: trimesh.Trimesh, enabled: bool) -> tuple[trimesh.Trimesh, dict[str, object]]:
+def _remove_small_components(
+    mesh: trimesh.Trimesh,
+    enabled: bool,
+    min_component_faces: int | None = None,
+    min_component_face_ratio: float | None = None,
+    max_components: int | None = None,
+) -> tuple[trimesh.Trimesh, dict[str, object]]:
     cfg = settings()
+    min_faces_setting = cfg.mesh_cleanup_min_component_faces if min_component_faces is None else min_component_faces
+    min_ratio_setting = (
+        cfg.mesh_cleanup_min_component_face_ratio if min_component_face_ratio is None else min_component_face_ratio
+    )
+    max_components_setting = cfg.mesh_cleanup_max_components if max_components is None else max_components
     stats: dict[str, object] = {
         "mesh_fragment_cleanup_enabled": bool(enabled),
-        "mesh_fragment_cleanup_min_faces": int(cfg.mesh_cleanup_min_component_faces),
-        "mesh_fragment_cleanup_min_face_ratio": float(cfg.mesh_cleanup_min_component_face_ratio),
+        "mesh_fragment_cleanup_min_faces": int(min_faces_setting),
+        "mesh_fragment_cleanup_min_face_ratio": float(min_ratio_setting),
+        "mesh_fragment_cleanup_max_components": int(max_components_setting),
         "mesh_fragment_components_before": 1,
         "mesh_fragment_components_after": 1,
         "mesh_fragment_components_removed": 0,
@@ -370,10 +390,10 @@ def _remove_small_components(mesh: trimesh.Trimesh, enabled: bool) -> tuple[trim
         return mesh, stats
 
     largest_faces = int(component_faces.max())
-    min_faces = max(1, int(cfg.mesh_cleanup_min_component_faces))
-    min_ratio = max(0.0, float(cfg.mesh_cleanup_min_component_face_ratio))
+    min_faces = max(1, int(min_faces_setting))
+    min_ratio = max(0.0, float(min_ratio_setting))
     face_threshold = max(min_faces, int(np.ceil(largest_faces * min_ratio)))
-    max_components = max(0, int(cfg.mesh_cleanup_max_components))
+    max_components = max(0, int(max_components_setting))
     keep_labels = np.flatnonzero(component_faces >= face_threshold)
     if max_components > 0 and keep_labels.shape[0] > max_components:
         keep_order = np.argsort(component_faces[keep_labels])[::-1][:max_components]
@@ -398,6 +418,131 @@ def _remove_small_components(mesh: trimesh.Trimesh, enabled: bool) -> tuple[trim
     stats["mesh_fragment_kept_component_faces"] = [
         int(value) for value in sorted(component_faces[keep_labels].tolist(), reverse=True)[:16]
     ]
+    return cleaned, stats
+
+
+def _remove_post_floor_fragments(
+    mesh: trimesh.Trimesh,
+    cleanup_fragments: bool,
+    trim_floor_sheets: bool,
+    floor_metrics: dict[str, object],
+) -> tuple[trimesh.Trimesh, dict[str, object]]:
+    floor_faces_removed = int(floor_metrics.get("mesh_floor_sheet_faces_removed") or 0)
+    enabled = bool(cleanup_fragments and trim_floor_sheets and floor_faces_removed > 0)
+    cfg = settings()
+    stats: dict[str, object] = {
+        "post_floor_mesh_fragment_cleanup_enabled": enabled,
+        "post_floor_mesh_fragment_cleanup_min_faces": int(cfg.mesh_post_floor_cleanup_min_component_faces),
+        "post_floor_mesh_fragment_cleanup_bottom_fraction": float(cfg.mesh_post_floor_cleanup_bottom_fraction),
+        "post_floor_mesh_fragment_cleanup_max_thickness_fraction": float(
+            cfg.mesh_post_floor_cleanup_max_thickness_fraction
+        ),
+        "post_floor_mesh_fragment_cleanup_min_normal_y": float(cfg.mesh_post_floor_cleanup_min_normal_y),
+        "post_floor_mesh_fragment_cleanup_max_remove_face_ratio": float(
+            cfg.mesh_post_floor_cleanup_max_remove_face_ratio
+        ),
+        "post_floor_mesh_fragment_components_before": 1,
+        "post_floor_mesh_fragment_components_after": 1,
+        "post_floor_mesh_fragment_components_removed": 0,
+        "post_floor_mesh_fragment_faces_removed": 0,
+        "post_floor_mesh_fragment_vertices_removed": 0,
+        "post_floor_mesh_fragment_candidate_summaries": [],
+    }
+    if not cleanup_fragments:
+        stats["post_floor_mesh_fragment_cleanup_skipped_reason"] = "fragment cleanup disabled"
+        return mesh, stats
+    elif not trim_floor_sheets:
+        stats["post_floor_mesh_fragment_cleanup_skipped_reason"] = "floor sheet trim disabled"
+        return mesh, stats
+    elif floor_faces_removed <= 0:
+        stats["post_floor_mesh_fragment_cleanup_skipped_reason"] = "floor sheet trim removed no faces"
+        return mesh, stats
+    vertices = np.asarray(mesh.vertices)
+    faces = np.asarray(mesh.faces)
+    if vertices.shape[0] < 3 or faces.shape[0] < 1:
+        stats["post_floor_mesh_fragment_cleanup_skipped_reason"] = "empty mesh"
+        return mesh, stats
+    try:
+        labels = trimesh.graph.connected_component_labels(mesh.face_adjacency, node_count=len(mesh.faces))
+    except Exception as exc:
+        stats["post_floor_mesh_fragment_cleanup_error"] = f"{type(exc).__name__}: {exc}"
+        return mesh, stats
+    if labels.size == 0:
+        stats["post_floor_mesh_fragment_cleanup_error"] = "component labeling returned no faces"
+        return mesh, stats
+
+    component_faces = np.bincount(labels)
+    stats["post_floor_mesh_fragment_components_before"] = int(component_faces.shape[0])
+    if component_faces.shape[0] == 1:
+        return mesh, stats
+
+    mesh_min = vertices.min(axis=0)
+    mesh_max = vertices.max(axis=0)
+    mesh_extent = np.maximum(mesh_max - mesh_min, 1e-9)
+    bottom_limit = float(mesh_min[1] + mesh_extent[1] * max(0.0, cfg.mesh_post_floor_cleanup_bottom_fraction))
+    max_thickness = float(mesh_extent[1] * max(0.0, cfg.mesh_post_floor_cleanup_max_thickness_fraction))
+    min_faces = max(1, int(cfg.mesh_post_floor_cleanup_min_component_faces))
+    min_normal_y = min(max(float(cfg.mesh_post_floor_cleanup_min_normal_y), 0.0), 1.0)
+    face_normals = np.asarray(mesh.face_normals)
+
+    remove_labels: list[int] = []
+    removed_component_faces: list[int] = []
+    candidate_summaries: list[dict[str, object]] = []
+    for label, face_count in enumerate(component_faces):
+        if int(face_count) < min_faces:
+            continue
+        face_indices = np.flatnonzero(labels == label)
+        component_vertices = vertices[np.unique(faces[face_indices].reshape(-1))]
+        component_min = component_vertices.min(axis=0)
+        component_max = component_vertices.max(axis=0)
+        component_extent = component_max - component_min
+        normal_y = float(np.mean(np.abs(face_normals[face_indices, 1])))
+        is_floor_residue = (
+            component_min[1] <= bottom_limit
+            and component_extent[1] <= max_thickness
+            and normal_y >= min_normal_y
+        )
+        if not is_floor_residue:
+            continue
+        remove_labels.append(int(label))
+        removed_component_faces.append(int(face_count))
+        if len(candidate_summaries) < 16:
+            candidate_summaries.append(
+                {
+                    "faces": int(face_count),
+                    "normal_y": round(normal_y, 4),
+                    "extent": np.round(component_extent, 5).tolist(),
+                    "min_y": round(float(component_min[1]), 5),
+                    "max_y": round(float(component_max[1]), 5),
+                }
+            )
+
+    stats["post_floor_mesh_fragment_candidates"] = len(remove_labels)
+    stats["post_floor_mesh_fragment_removed_component_faces"] = sorted(removed_component_faces, reverse=True)[:16]
+    stats["post_floor_mesh_fragment_candidate_summaries"] = candidate_summaries
+    if not remove_labels:
+        stats["post_floor_mesh_fragment_cleanup_skipped_reason"] = "no low flat floor residue components"
+        return mesh, stats
+
+    remove_faces = np.isin(labels, np.asarray(remove_labels, dtype=np.int64))
+    remove_face_count = int(remove_faces.sum())
+    max_remove_ratio = min(max(float(cfg.mesh_post_floor_cleanup_max_remove_face_ratio), 0.0), 1.0)
+    if remove_face_count > int(mesh.faces.shape[0] * max_remove_ratio):
+        stats["post_floor_mesh_fragment_cleanup_skipped_reason"] = "candidate face ratio exceeded safety limit"
+        return mesh, stats
+
+    keep_faces = ~remove_faces
+    if int(keep_faces.sum()) < max(12, int(mesh.faces.shape[0] * 0.4)):
+        stats["post_floor_mesh_fragment_cleanup_skipped_reason"] = "too few faces would remain"
+        return mesh, stats
+
+    before_vertices = int(mesh.vertices.shape[0])
+    cleaned = mesh.submesh([keep_faces], append=True, repair=False)
+    _clean_mesh(cleaned)
+    stats["post_floor_mesh_fragment_components_after"] = int(component_faces.shape[0] - len(remove_labels))
+    stats["post_floor_mesh_fragment_components_removed"] = len(remove_labels)
+    stats["post_floor_mesh_fragment_faces_removed"] = max(0, int(mesh.faces.shape[0]) - int(cleaned.faces.shape[0]))
+    stats["post_floor_mesh_fragment_vertices_removed"] = max(0, before_vertices - int(cleaned.vertices.shape[0]))
     return cleaned, stats
 
 
