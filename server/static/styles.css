@@ -116,6 +116,12 @@ h2 {
   background: rgba(154, 77, 18, 0.08);
 }
 
+.badge.loading {
+  color: #5b4a05;
+  border-color: rgba(132, 104, 4, 0.24);
+  background: rgba(132, 104, 4, 0.08);
+}
+
 .upload-form {
   margin-top: 28px;
 }
@@ -164,6 +170,39 @@ h2 {
 
 .actions {
   margin-top: 16px;
+}
+
+.options {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.option-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 54px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfd;
+}
+
+.option-row span {
+  display: grid;
+  gap: 2px;
+}
+
+.option-row small {
+  color: var(--muted);
+}
+
+.option-row input {
+  width: 22px;
+  height: 22px;
+  accent-color: var(--accent);
 }
 
 button,

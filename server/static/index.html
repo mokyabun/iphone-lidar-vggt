@@ -24,6 +24,23 @@
             <input id="scanPackage" name="scan_package" type="file" accept=".zip,application/zip" />
           </label>
 
+          <div class="options" aria-label="Pipeline options">
+            <label class="option-row">
+              <span>
+                <strong>SAM3 object masking</strong>
+                <small>Central box prompt</small>
+              </span>
+              <input id="sam3Masking" type="checkbox" />
+            </label>
+            <label class="option-row">
+              <span>
+                <strong>LiDAR scale alignment</strong>
+                <small>PCA + ICP metric layer</small>
+              </span>
+              <input id="lidarScaleAlignment" type="checkbox" checked />
+            </label>
+          </div>
+
           <div class="actions">
             <button id="submitButton" type="submit">Start Job</button>
             <button id="resetButton" type="button" class="secondary">Reset</button>
@@ -47,6 +64,8 @@
         <div id="downloads" class="downloads" hidden>
           <a id="resultLink" href="#">PLY</a>
           <a id="previewLink" href="#">GLB</a>
+          <a id="rawLink" href="#">Raw GLB</a>
+          <a id="rawPlyLink" href="#">Raw PLY</a>
           <a id="printLink" href="#">STL</a>
           <a id="lidarLink" href="#">LiDAR PLY</a>
         </div>

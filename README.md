@@ -34,9 +34,9 @@ TRELLIS.2 postprocessor wheels are cp310-only — micromamba gives a reproducibl
 | API orchestrator (`:8000`) | `api` | 3.11 | scan parsing, masking/crops, LiDAR cloud, metric alignment, asset export, job queue, static tester |
 | ReconViaGen worker (`:8011`) | `reconviagen` | 3.10 | runs `setup.sh` + TRELLIS.2 hybrid pipeline (`run_multi_image`) |
 
-`server/run.sh` bootstraps micromamba, builds both envs, starts the worker, waits
-for its `/health`, then starts the API. ReconViaGen itself is cloned at a pinned
-ref (`v0.5`) into the cache at build time.
+`server/run.sh` bootstraps micromamba, builds or reuses both envs, starts the
+worker, waits for its `/health`, then starts the API. ReconViaGen itself is
+cloned at a pinned ref (`v0.5`) into the cache at build time.
 
 ## Repository layout
 
@@ -65,13 +65,14 @@ export HF_TOKEN=...   # run.sh maps this to HUGGINGFACE_HUB_TOKEN if unset
 
 ## Environment lifecycle
 
-By default **both envs are rebuilt fresh on every run**. Because the ReconViaGen
-CUDA build (flash-attn / spconv / kaolin / nvdiffrast) takes 20–40 min, opt into
-the persistent-volume cache for repeat boots:
+By default both envs are reused when their spec hash matches. The ReconViaGen
+CUDA build (flash-attn / spconv / kaolin / nvdiffrast) takes 20–40 min, so repeat
+boots should only rebuild when requirements, Python versions, CUDA flags, wheel
+URLs, or the ReconViaGen ref change.
 
 ```bash
-export APP_REUSE_ENV=1      # reuse a cached env when its spec hash matches
-export APP_FORCE_REBUILD=1  # always rebuild, even with APP_REUSE_ENV=1
+export APP_FORCE_REBUILD=1  # force a rebuild even when the spec hash matches
+export APP_REUSE_ENV=0      # opt out of env reuse and rebuild every run
 ```
 
 The spec hash covers the python version, requirements, `setup.sh` CUDA flags,

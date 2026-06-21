@@ -1,0 +1,6 @@
+fastapi>=0.115
+uvicorn>=0.30
+pydantic>=2.10
+pydantic-settings>=2.6
+numpy>=1.26,<3
+pillow>=10

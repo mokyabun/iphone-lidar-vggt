@@ -137,6 +137,9 @@ private struct ResultDetailsView: View {
             if let inputViews = metrics.inputViews {
                 detailRow("Input views", "\(inputViews)", systemImage: "photo.on.rectangle")
             }
+            if let maskSource = metrics.maskSource {
+                detailRow("Mask", maskSource.uppercased(), systemImage: "viewfinder")
+            }
         }
     }
 
@@ -161,6 +164,9 @@ private struct ResultDetailsView: View {
             }
             if let scale = metrics.alignmentScale {
                 detailRow("Alignment scale", String(format: "%.3f", scale), systemImage: "scale.3d")
+            }
+            if let enabled = metrics.lidarScaleAlignmentEnabled {
+                detailRow("LiDAR layer", enabled ? "Enabled" : "Disabled", systemImage: "switch.2")
             }
             if let watertight = metrics.printMeshWatertight {
                 detailRow("Print mesh", watertight ? "Watertight" : "Needs repair", systemImage: "printer")

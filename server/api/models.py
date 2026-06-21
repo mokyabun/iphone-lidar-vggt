@@ -25,3 +25,9 @@ class ReconstructionResult:
     print_stl_output: Path | None
     lidar_reference_output: Path
     metrics: dict[str, object]
+
+
+@dataclass(frozen=True)
+class ReconstructionOptions:
+    enable_sam3_object_masking: bool = False
+    enable_lidar_scale_alignment: bool = True

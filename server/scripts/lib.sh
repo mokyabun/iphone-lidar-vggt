@@ -41,8 +41,9 @@ mm_pip() {
 }
 
 # Decide whether an env must be (re)built.
-# Default policy is "always fresh"; APP_REUSE_ENV=1 reuses a cached env whose
-# stamp matches the expected spec hash. APP_FORCE_REBUILD=1 always rebuilds.
+# Default policy reuses a cached env whose stamp matches the expected spec hash.
+# APP_REUSE_ENV=0 opts back into always-fresh envs, and APP_FORCE_REBUILD=1
+# always rebuilds.
 env_should_rebuild() {
   local prefix="$1" stamp_file="$2" expected="$3"
   if is_enabled "${APP_FORCE_REBUILD:-0}"; then
@@ -51,11 +52,11 @@ env_should_rebuild() {
   if ! env_exists "${prefix}"; then
     return 0
   fi
-  if is_enabled "${APP_REUSE_ENV:-0}"; then
-    if [ -f "${stamp_file}" ] && [ "$(cat "${stamp_file}")" = "${expected}" ]; then
-      return 1
-    fi
+  if ! is_enabled "${APP_REUSE_ENV:-1}"; then
     return 0
+  fi
+  if [ -f "${stamp_file}" ] && [ "$(cat "${stamp_file}")" = "${expected}" ]; then
+    return 1
   fi
   return 0
 }

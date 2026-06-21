@@ -2,6 +2,8 @@ import SwiftUI
 
 struct BackendSettingsView: View {
     @Binding var backendBaseURL: String
+    @Binding var enableSAM3ObjectMasking: Bool
+    @Binding var enableLiDARScaleAlignment: Bool
     @ObservedObject var scanner: ScanSessionManager
     let refresh: () async -> Void
     @Environment(\.dismiss) private var dismiss
@@ -43,6 +45,22 @@ struct BackendSettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+
+                Section("Options") {
+                    Toggle(isOn: $enableSAM3ObjectMasking) {
+                        Label("SAM3 object masking", systemImage: "viewfinder")
+                    }
+                    if let capability = scanner.backendCapabilities?.features?.sam3ObjectMasking {
+                        capabilityRow("SAM3 worker", capability: capability)
+                    }
+
+                    Toggle(isOn: $enableLiDARScaleAlignment) {
+                        Label("LiDAR scale alignment", systemImage: "ruler")
+                    }
+                    if let capability = scanner.backendCapabilities?.features?.lidarScaleAlignment {
+                        capabilityRow("Scale layer", capability: capability)
+                    }
+                }
             }
             .navigationTitle("Backend")
             .navigationBarTitleDisplayMode(.inline)
@@ -50,6 +68,23 @@ struct BackendSettingsView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
+            }
+        }
+    }
+
+    private func capabilityRow(_ title: String, capability: PipelineCapability) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(title)
+                Spacer()
+                Label(capability.state.title, systemImage: capability.state.systemImage)
+                    .font(.footnote)
+                    .foregroundStyle(capability.state.color)
+            }
+            if let reason = capability.reason {
+                Text(reason)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
         }
     }

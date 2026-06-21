@@ -89,8 +89,23 @@ def align_reconviagen_mesh(
         "alignment_scale": round(scale, 6),
         "mesh_vertices": int(mesh.vertices.shape[0]),
         "mesh_faces": int(mesh.faces.shape[0]),
+        "aligned_object_extent_m": _robust_extent(np.asarray(mesh.vertices)).round(5).tolist(),
         "print_mesh_watertight": watertight,
         "print_stl_output": print_path,
+    }
+
+
+def export_raw_mesh(raw_mesh_path: Path, output_ply: Path) -> dict[str, object]:
+    loaded = trimesh.load(raw_mesh_path, force="scene")
+    mesh = _scene_to_mesh(loaded)
+    if mesh.vertices.shape[0] < 3 or mesh.faces.shape[0] < 1:
+        raise RuntimeError("ReconViaGen output mesh was empty.")
+    output_ply.parent.mkdir(parents=True, exist_ok=True)
+    mesh.export(output_ply, file_type="ply")
+    return {
+        "raw_mesh_vertices": int(mesh.vertices.shape[0]),
+        "raw_mesh_faces": int(mesh.faces.shape[0]),
+        "raw_object_extent_m": _robust_extent(np.asarray(mesh.vertices)).round(5).tolist(),
     }
 
 

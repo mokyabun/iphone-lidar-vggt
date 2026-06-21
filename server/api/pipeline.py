@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import shutil
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -11,14 +12,20 @@ from PIL import Image
 from .config import settings
 from .geometry import bounds, colors_for_depth_pixels, keyframe_indices, unproject_depth
 from .mask import central_object_mask, resize_mask
-from .models import FrameRecord, ReconstructionResult
+from .models import FrameRecord, ReconstructionOptions, ReconstructionResult
 from .ply import write_point_cloud_ply
-from .reconviagen import align_reconviagen_mesh, generate_mesh
+from .reconviagen import align_reconviagen_mesh, export_raw_mesh, generate_mesh
+from .sam3 import segment_with_sam3
 from .scan_io import extracted_scan_package, read_confidence, read_depth, read_frames, read_image, write_json
 
 
-def reconstruct_scan(package_path: Path, output_dir: Path) -> ReconstructionResult:
+def reconstruct_scan(
+    package_path: Path,
+    output_dir: Path,
+    options: ReconstructionOptions | None = None,
+) -> ReconstructionResult:
     started = time.monotonic()
+    options = options or ReconstructionOptions()
     cfg = settings()
     output_dir.mkdir(parents=True, exist_ok=True)
     warnings: list[str] = []
@@ -30,8 +37,30 @@ def reconstruct_scan(package_path: Path, output_dir: Path) -> ReconstructionResu
             raise RuntimeError("Scan package did not contain frames.")
         selected = [frames[index] for index in keyframe_indices(len(frames), cfg.max_frames)]
         _log(f"frames: total={len(frames)} selected={len(selected)} max_frames={cfg.max_frames}")
+        sam3_masking_used = False
         with _timed("build object masks"):
             masks = {frame.frame_id: central_object_mask(read_depth(root, frame)) for frame in selected}
+            if options.enable_sam3_object_masking:
+                try:
+                    sam3_masks = segment_with_sam3(root, selected, output_dir / "sam3_masks")
+                    resized_masks = {
+                        frame.frame_id: resize_mask(
+                            sam3_masks[frame.frame_id],
+                            frame.depth_width,
+                            frame.depth_height,
+                        )
+                        for frame in selected
+                        if frame.frame_id in sam3_masks
+                    }
+                    if len(resized_masks) == len(selected) and any(mask.any() for mask in resized_masks.values()):
+                        masks = resized_masks
+                        sam3_masking_used = True
+                    else:
+                        warnings.append(
+                            "SAM3 object masking produced incomplete or empty masks. Falling back to depth-based masks."
+                        )
+                except Exception as exc:
+                    warnings.append(f"SAM3 object masking failed. Falling back to depth-based masks. Error: {exc}")
         with _timed("build LiDAR reference cloud"):
             object_points, object_colors, scene_points = _build_lidar_reference(root, selected, masks)
         _log(f"LiDAR points: object={object_points.shape[0]} scene={scene_points.shape[0]}")
@@ -52,13 +81,32 @@ def reconstruct_scan(package_path: Path, output_dir: Path) -> ReconstructionResu
             _log(f"warning: {mask_warning}")
 
         raw_mesh = output_dir / "reconviagen_raw.glb"
+        raw_ply = output_dir / "reconviagen_raw.ply"
         final_ply = output_dir / "reconviagen_metric.ply"
         preview_glb = output_dir / "reconviagen_metric.glb"
         print_stl = output_dir / "reconviagen_metric_print_mm.stl"
         with _timed("generate ReconViaGen mesh"):
             generate_mesh(input_dir, raw_mesh)
-        with _timed("align ReconViaGen mesh to LiDAR"):
-            mesh_metrics = align_reconviagen_mesh(raw_mesh, final_ply, preview_glb, print_stl, object_points)
+        with _timed("export raw ReconViaGen mesh"):
+            raw_mesh_metrics = export_raw_mesh(raw_mesh, raw_ply)
+        if options.enable_lidar_scale_alignment:
+            with _timed("align ReconViaGen mesh to LiDAR"):
+                mesh_metrics = align_reconviagen_mesh(raw_mesh, final_ply, preview_glb, print_stl, object_points)
+            final_output_source = "reconviagen_lidar_scale"
+        else:
+            with _timed("use raw ReconViaGen mesh without LiDAR scale alignment"):
+                shutil.copyfile(raw_ply, final_ply)
+                shutil.copyfile(raw_mesh, preview_glb)
+            mesh_metrics = {
+                "alignment_rmse_m": None,
+                "alignment_scale": None,
+                "mesh_vertices": raw_mesh_metrics["raw_mesh_vertices"],
+                "mesh_faces": raw_mesh_metrics["raw_mesh_faces"],
+                "aligned_object_extent_m": None,
+                "print_mesh_watertight": None,
+                "print_stl_output": None,
+            }
+            final_output_source = "reconviagen_raw_no_lidar_scale"
 
     object_min, object_max, object_extent = bounds(object_points)
     scene_min, scene_max, scene_extent = bounds(scene_points)
@@ -71,15 +119,24 @@ def reconstruct_scan(package_path: Path, output_dir: Path) -> ReconstructionResu
         "object_bounds_min_m": object_min,
         "object_bounds_max_m": object_max,
         "object_extent_m": object_extent,
+        "lidar_object_extent_m": object_extent,
         "scene_bounds_min_m": scene_min,
         "scene_bounds_max_m": scene_max,
         "scene_extent_m": scene_extent,
         "final_output_type": "mesh",
-        "final_output_source": "reconviagen_lidar_scale",
+        "final_output_source": final_output_source,
         "final_output": str(final_ply),
         "preview_glb_output": str(preview_glb),
         "lidar_reference_output": str(lidar_output),
+        "raw_mesh_output": str(raw_mesh),
+        "raw_ply_output": str(raw_ply),
+        "aligned_mesh_output": str(preview_glb) if options.enable_lidar_scale_alignment else None,
+        "sam3_object_masking_enabled": options.enable_sam3_object_masking,
+        "sam3_masking_used": sam3_masking_used,
+        "mask_source": "sam3" if sam3_masking_used else "depth",
+        "lidar_scale_alignment_enabled": options.enable_lidar_scale_alignment,
         "warnings": warnings,
+        **raw_mesh_metrics,
         **mesh_metrics,
     }
     with _timed("write metrics"):

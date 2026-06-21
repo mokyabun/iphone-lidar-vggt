@@ -228,7 +228,7 @@ final class ScanSessionManager: NSObject, ObservableObject {
         return pipelineCapability
     }
 
-    func uploadLatestPackage(backendBaseURL: String) async {
+    func uploadLatestPackage(backendBaseURL: String, options: BackendReconstructionOptions) async {
         guard let lastPackageURL else { return }
         guard let baseURL = URL(string: backendBaseURL) else {
             statusText = "Bad backend URL"
@@ -246,7 +246,7 @@ final class ScanSessionManager: NSObject, ObservableObject {
         downloadingAssets = []
         do {
             let client = BackendClient(baseURL: baseURL)
-            let result = try await client.reconstruct(packageURL: lastPackageURL)
+            let result = try await client.reconstruct(packageURL: lastPackageURL, options: options)
             resultURL = result.outputURL
             resultJobID = result.jobID
             resultMetrics = result.metrics

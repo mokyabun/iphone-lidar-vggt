@@ -1,5 +1,7 @@
 const form = document.querySelector("#uploadForm");
 const input = document.querySelector("#scanPackage");
+const sam3Masking = document.querySelector("#sam3Masking");
+const lidarScaleAlignment = document.querySelector("#lidarScaleAlignment");
 const dropZone = document.querySelector("#dropZone");
 const fileName = document.querySelector("#fileName");
 const submitButton = document.querySelector("#submitButton");
@@ -12,6 +14,8 @@ const details = document.querySelector("#details");
 const downloads = document.querySelector("#downloads");
 const resultLink = document.querySelector("#resultLink");
 const previewLink = document.querySelector("#previewLink");
+const rawLink = document.querySelector("#rawLink");
+const rawPlyLink = document.querySelector("#rawPlyLink");
 const printLink = document.querySelector("#printLink");
 const lidarLink = document.querySelector("#lidarLink");
 
@@ -49,6 +53,8 @@ function setState(state, payload = {}) {
 function setDownloads(jobId) {
   resultLink.href = `/jobs/${jobId}/result`;
   previewLink.href = `/jobs/${jobId}/preview`;
+  rawLink.href = `/jobs/${jobId}/raw`;
+  rawPlyLink.href = `/jobs/${jobId}/raw-ply`;
   printLink.href = `/jobs/${jobId}/print`;
   lidarLink.href = `/jobs/${jobId}/lidar`;
   downloads.hidden = false;
@@ -92,10 +98,16 @@ async function pollJob(jobId) {
 async function startJob(file) {
   const body = new FormData();
   body.append("scan_package", file);
+  body.append("enable_sam3_object_masking", sam3Masking.checked ? "true" : "false");
+  body.append("enable_lidar_scale_alignment", lidarScaleAlignment.checked ? "true" : "false");
 
   submitButton.disabled = true;
   downloads.hidden = true;
-  setState("queued", { file: file.name });
+  setState("queued", {
+    file: file.name,
+    enable_sam3_object_masking: sam3Masking.checked,
+    enable_lidar_scale_alignment: lidarScaleAlignment.checked,
+  });
 
   const response = await fetch("/jobs", {
     method: "POST",

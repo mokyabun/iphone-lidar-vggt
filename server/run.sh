@@ -23,9 +23,17 @@ export RECONVIAGEN_REPO_DIR="${RECONVIAGEN_REPO_DIR:-${APP_CACHE_ROOT}/ReconViaG
 export RECONVIAGEN_WORKER_HOST="${RECONVIAGEN_WORKER_HOST:-127.0.0.1}"
 export RECONVIAGEN_WORKER_PORT="${RECONVIAGEN_WORKER_PORT:-8011}"
 export RECONVIAGEN_WORKER_LOG="${RECONVIAGEN_WORKER_LOG:-${APP_CACHE_ROOT}/worker-reconviagen.log}"
+export SAM3_PYTHON_VERSION="${SAM3_PYTHON_VERSION:-3.12}"
+export SAM3_ENV_DIR="${SAM3_ENV_DIR:-${APP_LOCAL_ROOT}/envs/sam3}"
+export SAM3_REPO_DIR="${SAM3_REPO_DIR:-${APP_CACHE_ROOT}/sam3}"
+export SAM3_WORKER_HOST="${SAM3_WORKER_HOST:-127.0.0.1}"
+export SAM3_WORKER_PORT="${SAM3_WORKER_PORT:-8012}"
+export SAM3_WORKER_LOG="${SAM3_WORKER_LOG:-${APP_CACHE_ROOT}/worker-sam3.log}"
 
 export APP_PREPARE_RECONVIAGEN="${APP_PREPARE_RECONVIAGEN:-1}"
 export APP_START_RECONVIAGEN="${APP_START_RECONVIAGEN:-1}"
+export APP_PREPARE_SAM3="${APP_PREPARE_SAM3:-1}"
+export APP_START_SAM3="${APP_START_SAM3:-1}"
 
 export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
 export HF_HUB_DISABLE_PROGRESS_BARS="${HF_HUB_DISABLE_PROGRESS_BARS:-0}"
@@ -41,7 +49,8 @@ if [ -n "${HF_TOKEN:-}" ] && [ -z "${HUGGINGFACE_HUB_TOKEN:-}" ]; then
   export HUGGINGFACE_HUB_TOKEN="${HF_TOKEN}"
 fi
 
-WORKER_PID=""
+RECONVIAGEN_WORKER_PID=""
+SAM3_WORKER_PID=""
 
 configure_cache() {
   export XDG_CACHE_HOME="${XDG_CACHE_HOME:-${APP_CACHE_ROOT}/xdg}"
@@ -89,7 +98,7 @@ start_worker() {
       --host "${RECONVIAGEN_WORKER_HOST}" \
       --port "${RECONVIAGEN_WORKER_PORT}"
   ) > >(sed -u 's/^/[worker-reconviagen] /' | tee -a "${RECONVIAGEN_WORKER_LOG}") 2>&1 &
-  WORKER_PID="$!"
+  RECONVIAGEN_WORKER_PID="$!"
 
   local timeout="${RECONVIAGEN_WORKER_BOOT_TIMEOUT:-180}"
   for _ in $(seq 1 "${timeout}"); do
@@ -97,9 +106,9 @@ start_worker() {
       LOG_PREFIX="run" log "ReconViaGen worker is healthy."
       return 0
     fi
-    if ! kill -0 "${WORKER_PID}" 2>/dev/null; then
+    if ! kill -0 "${RECONVIAGEN_WORKER_PID}" 2>/dev/null; then
       LOG_PREFIX="run" log "ReconViaGen worker exited during startup; see ${RECONVIAGEN_WORKER_LOG}."
-      WORKER_PID=""
+      RECONVIAGEN_WORKER_PID=""
       return 0
     fi
     sleep 1
@@ -107,10 +116,56 @@ start_worker() {
   LOG_PREFIX="run" log "ReconViaGen worker did not report healthy within ${timeout}s; continuing."
 }
 
+start_sam3_worker() {
+  is_enabled "${APP_START_SAM3}" || return 0
+  if [ -n "${SAM3_WORKER_URL:-}" ]; then
+    return 0
+  fi
+  if ! env_exists "${SAM3_ENV_DIR}"; then
+    LOG_PREFIX="run" log "sam3 env missing at ${SAM3_ENV_DIR}; API starts without a local SAM3 worker."
+    return 0
+  fi
+
+  export SAM3_WORKER_URL="http://${SAM3_WORKER_HOST}:${SAM3_WORKER_PORT}"
+  export SAM3_REPO_DIR
+  mkdir -p "$(dirname "${SAM3_WORKER_LOG}")"
+  LOG_PREFIX="run" log "Starting SAM3 worker on ${SAM3_WORKER_URL}; logging to ${SAM3_WORKER_LOG}."
+  (
+    cd "${SERVER_DIR}"
+    exec "$(micromamba_bin)" run -p "${SAM3_ENV_DIR}" env \
+      PYTHONUNBUFFERED="${PYTHONUNBUFFERED}" \
+      PYTHONPATH="${SERVER_DIR}:${PYTHONPATH:-}" \
+      SAM3_REPO_DIR="${SAM3_REPO_DIR}" \
+      python -u -m sam3_worker.main \
+      --host "${SAM3_WORKER_HOST}" \
+      --port "${SAM3_WORKER_PORT}"
+  ) > >(sed -u 's/^/[worker-sam3] /' | tee -a "${SAM3_WORKER_LOG}") 2>&1 &
+  SAM3_WORKER_PID="$!"
+
+  local timeout="${SAM3_WORKER_BOOT_TIMEOUT:-240}"
+  for _ in $(seq 1 "${timeout}"); do
+    if curl -fsS "${SAM3_WORKER_URL}/health" >/dev/null 2>&1; then
+      LOG_PREFIX="run" log "SAM3 worker responded to health checks."
+      return 0
+    fi
+    if ! kill -0 "${SAM3_WORKER_PID}" 2>/dev/null; then
+      LOG_PREFIX="run" log "SAM3 worker exited during startup; see ${SAM3_WORKER_LOG}."
+      SAM3_WORKER_PID=""
+      return 0
+    fi
+    sleep 1
+  done
+  LOG_PREFIX="run" log "SAM3 worker did not respond within ${timeout}s; continuing."
+}
+
 stop_worker() {
-  if [ -n "${WORKER_PID}" ]; then
-    kill "${WORKER_PID}" >/dev/null 2>&1 || true
-    wait "${WORKER_PID}" >/dev/null 2>&1 || true
+  if [ -n "${RECONVIAGEN_WORKER_PID}" ]; then
+    kill "${RECONVIAGEN_WORKER_PID}" >/dev/null 2>&1 || true
+    wait "${RECONVIAGEN_WORKER_PID}" >/dev/null 2>&1 || true
+  fi
+  if [ -n "${SAM3_WORKER_PID}" ]; then
+    kill "${SAM3_WORKER_PID}" >/dev/null 2>&1 || true
+    wait "${SAM3_WORKER_PID}" >/dev/null 2>&1 || true
   fi
 }
 
@@ -122,8 +177,12 @@ configure_cache
 if should_manage_worker && is_enabled "${APP_PREPARE_RECONVIAGEN}"; then
   "${SCRIPT_DIR}/env_reconviagen.sh"
 fi
+if is_enabled "${APP_PREPARE_SAM3}"; then
+  bash "${SCRIPT_DIR}/env_sam3.sh"
+fi
 
 start_worker
+start_sam3_worker
 trap stop_worker EXIT INT TERM
 
 LOG_PREFIX="run" log "Starting API on ${APP_HOST}:${APP_PORT}."

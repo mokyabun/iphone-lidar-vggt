@@ -18,6 +18,8 @@ enum ScanPipeline: String, CaseIterable, Identifiable {
 enum BackendAssetKind: String, CaseIterable, Identifiable {
     case result
     case preview
+    case raw
+    case rawPly = "raw-ply"
     case print
     case lidar
 
@@ -27,6 +29,8 @@ enum BackendAssetKind: String, CaseIterable, Identifiable {
         switch self {
         case .result: return "PLY"
         case .preview: return "PBR GLB"
+        case .raw: return "Raw GLB"
+        case .rawPly: return "Raw PLY"
         case .print: return "Print STL"
         case .lidar: return "LiDAR Ref"
         }
@@ -36,6 +40,8 @@ enum BackendAssetKind: String, CaseIterable, Identifiable {
         switch self {
         case .result: return "reconviagen_metric.ply"
         case .preview: return "reconviagen_metric.glb"
+        case .raw: return "reconviagen_raw.glb"
+        case .rawPly: return "reconviagen_raw.ply"
         case .print: return "reconviagen_metric_print_mm.stl"
         case .lidar: return "lidar_reference.ply"
         }
@@ -45,6 +51,8 @@ enum BackendAssetKind: String, CaseIterable, Identifiable {
         switch self {
         case .result: return "cube.transparent"
         case .preview: return "paintpalette"
+        case .raw: return "cube"
+        case .rawPly: return "cube.transparent"
         case .print: return "printer"
         case .lidar: return "ruler"
         }
@@ -57,14 +65,25 @@ struct BackendReconstructionResult {
     let metrics: BackendMetrics?
 }
 
+struct BackendReconstructionOptions {
+    var enableSAM3ObjectMasking: Bool
+    var enableLiDARScaleAlignment: Bool
+}
+
 struct BackendCapabilities: Decodable {
     let pipeline: String?
     let state: PipelineState
     let reason: String?
+    let features: BackendFeatures?
 
     var capability: PipelineCapability {
         PipelineCapability(state: state, reason: reason)
     }
+}
+
+struct BackendFeatures: Decodable {
+    let sam3ObjectMasking: PipelineCapability?
+    let lidarScaleAlignment: PipelineCapability?
 }
 
 struct PipelineCapability: Decodable {
@@ -110,11 +129,23 @@ struct BackendMetrics: Decodable {
     let printMeshWatertight: Bool?
     let alignmentRmseM: Double?
     let alignmentScale: Double?
+    let sam3ObjectMaskingEnabled: Bool?
+    let sam3MaskingUsed: Bool?
+    let maskSource: String?
+    let lidarScaleAlignmentEnabled: Bool?
+    let rawMeshOutput: String?
+    let rawPlyOutput: String?
+    let alignedMeshOutput: String?
+    let rawObjectExtentM: [Double]?
+    let alignedObjectExtentM: [Double]?
+    let lidarObjectExtentM: [Double]?
 
     func supports(_ kind: BackendAssetKind) -> Bool {
         switch kind {
         case .result: return true
         case .preview: return previewGlbOutput != nil
+        case .raw: return rawMeshOutput != nil
+        case .rawPly: return rawPlyOutput != nil
         case .print: return printStlOutput != nil
         case .lidar: return lidarReferenceOutput != nil
         }

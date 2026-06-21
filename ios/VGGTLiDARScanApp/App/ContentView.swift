@@ -3,6 +3,8 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var scanner = ScanSessionManager()
     @AppStorage("backendBaseURL") private var backendBaseURL = "http://127.0.0.1:8000"
+    @AppStorage("enableSAM3ObjectMasking") private var enableSAM3ObjectMasking = false
+    @AppStorage("enableLiDARScaleAlignment") private var enableLiDARScaleAlignment = true
     @State private var showResult = false
     @State private var showSettings = false
 
@@ -28,6 +30,8 @@ struct ContentView: View {
         .sheet(isPresented: $showSettings) {
             BackendSettingsView(
                 backendBaseURL: $backendBaseURL,
+                enableSAM3ObjectMasking: $enableSAM3ObjectMasking,
+                enableLiDARScaleAlignment: $enableLiDARScaleAlignment,
                 scanner: scanner,
                 refresh: refreshBackend
             )
@@ -81,7 +85,13 @@ struct ContentView: View {
                 if let packageURL = scanner.lastPackageURL {
                     Button {
                         Task {
-                            await scanner.uploadLatestPackage(backendBaseURL: backendBaseURL)
+                            await scanner.uploadLatestPackage(
+                                backendBaseURL: backendBaseURL,
+                                options: BackendReconstructionOptions(
+                                    enableSAM3ObjectMasking: enableSAM3ObjectMasking,
+                                    enableLiDARScaleAlignment: enableLiDARScaleAlignment
+                                )
+                            )
                             showResult = scanner.resultURL != nil
                         }
                     } label: {

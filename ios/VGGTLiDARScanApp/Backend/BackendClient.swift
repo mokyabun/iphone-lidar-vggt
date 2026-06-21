@@ -10,8 +10,8 @@ struct BackendClient {
         return try JSONDecoder.scanBackend.decode(BackendCapabilities.self, from: data)
     }
 
-    func reconstruct(packageURL: URL) async throws -> BackendReconstructionResult {
-        let submission = try await submitJob(packageURL: packageURL)
+    func reconstruct(packageURL: URL, options: BackendReconstructionOptions) async throws -> BackendReconstructionResult {
+        let submission = try await submitJob(packageURL: packageURL, options: options)
         let status = try await waitForJob(submission.jobID, timeout: ScanPipeline.reconviagen.timeout)
         let outputURL = try await downloadAsset(jobID: submission.jobID, kind: .result)
         return BackendReconstructionResult(
@@ -21,7 +21,7 @@ struct BackendClient {
         )
     }
 
-    private func submitJob(packageURL: URL) async throws -> BackendJobSubmission {
+    private func submitJob(packageURL: URL, options: BackendReconstructionOptions) async throws -> BackendJobSubmission {
         var components = URLComponents(url: baseURL.appendingPathComponent("jobs"), resolvingAgainstBaseURL: false)
         guard let url = components?.url else {
             throw URLError(.badURL)
@@ -38,7 +38,18 @@ struct BackendClient {
         body.appendString("Content-Disposition: form-data; name=\"scan_package\"; filename=\"ScanPackage.zip\"\r\n")
         body.appendString("Content-Type: application/zip\r\n\r\n")
         body.append(try Data(contentsOf: packageURL))
-        body.appendString("\r\n--\(boundary)--\r\n")
+        body.appendString("\r\n")
+        body.appendFormField(
+            name: "enable_sam3_object_masking",
+            value: options.enableSAM3ObjectMasking ? "true" : "false",
+            boundary: boundary
+        )
+        body.appendFormField(
+            name: "enable_lidar_scale_alignment",
+            value: options.enableLiDARScaleAlignment ? "true" : "false",
+            boundary: boundary
+        )
+        body.appendString("--\(boundary)--\r\n")
 
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = 180
@@ -172,6 +183,12 @@ private struct BackendErrorPayload: Decodable {
 private extension Data {
     mutating func appendString(_ string: String) {
         append(Data(string.utf8))
+    }
+
+    mutating func appendFormField(name: String, value: String, boundary: String) {
+        appendString("--\(boundary)\r\n")
+        appendString("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n")
+        appendString("\(value)\r\n")
     }
 }
 

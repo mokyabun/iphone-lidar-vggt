@@ -4,15 +4,18 @@ import json
 import shutil
 import threading
 import time
+import urllib.error
+import urllib.request
 import uuid
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import env_bool, settings
+from .models import ReconstructionOptions
 from .pipeline import reconstruct_scan
 
 app = FastAPI(title="ReconViaGen LiDAR Scale API")
@@ -28,30 +31,59 @@ def health() -> dict[str, str]:
 def capabilities() -> dict[str, object]:
     cfg = settings()
     configured = bool(cfg.reconviagen_command or cfg.reconviagen_worker_url or env_bool("RECONVIAGEN_MOCK", False))
+    sam3_state, sam3_reason = _worker_capability(cfg.sam3_worker_url, "SAM3 worker")
     return {
         "pipeline": "reconviagen_lidar_scale",
         "state": "available" if configured else "unavailable",
         "reason": None if configured else "Start with ./run.sh or set RECONVIAGEN_COMMAND/RECONVIAGEN_WORKER_URL.",
+        "features": {
+            "sam3_object_masking": {
+                "state": sam3_state,
+                "reason": sam3_reason,
+                "default_enabled": False,
+            },
+            "lidar_scale_alignment": {
+                "state": "available",
+                "reason": None,
+                "default_enabled": True,
+            },
+        },
     }
 
 
 @app.post("/jobs", status_code=202)
-def create_job(scan_package: UploadFile = File(...)) -> dict[str, object]:
+def create_job(
+    scan_package: UploadFile = File(...),
+    enable_sam3_object_masking: bool = Form(False),
+    enable_lidar_scale_alignment: bool = Form(True),
+) -> dict[str, object]:
+    options = ReconstructionOptions(
+        enable_sam3_object_masking=enable_sam3_object_masking,
+        enable_lidar_scale_alignment=enable_lidar_scale_alignment,
+    )
     job_id, job_dir, package_path = _store_upload(scan_package)
-    _log(f"job {job_id}: queued package={package_path}")
+    _log(f"job {job_id}: queued package={package_path} options={options}")
     _write_status(job_dir, "queued")
-    thread = threading.Thread(target=_run_job, args=(job_id, package_path, job_dir), daemon=True)
+    thread = threading.Thread(target=_run_job, args=(job_id, package_path, job_dir, options), daemon=True)
     thread.start()
     return {"job_id": job_id, "status": "queued"}
 
 
 @app.post("/reconstruct")
-def reconstruct_now(scan_package: UploadFile = File(...)) -> FileResponse:
+def reconstruct_now(
+    scan_package: UploadFile = File(...),
+    enable_sam3_object_masking: bool = Form(False),
+    enable_lidar_scale_alignment: bool = Form(True),
+) -> FileResponse:
+    options = ReconstructionOptions(
+        enable_sam3_object_masking=enable_sam3_object_masking,
+        enable_lidar_scale_alignment=enable_lidar_scale_alignment,
+    )
     job_id, job_dir, package_path = _store_upload(scan_package)
-    _log(f"job {job_id}: synchronous reconstruction requested package={package_path}")
+    _log(f"job {job_id}: synchronous reconstruction requested package={package_path} options={options}")
     with _LOCK:
         _log(f"job {job_id}: synchronous reconstruction started")
-        result = reconstruct_scan(package_path, job_dir / "output")
+        result = reconstruct_scan(package_path, job_dir / "output", options=options)
     _log(f"job {job_id}: synchronous reconstruction complete output={result.final_output}")
     return FileResponse(
         result.final_output,
@@ -88,6 +120,16 @@ def get_preview(job_id: str) -> FileResponse:
     return _file_response(job_id, "reconviagen_metric.glb", "reconviagen_metric.glb", "model/gltf-binary")
 
 
+@app.get("/jobs/{job_id}/raw")
+def get_raw_preview(job_id: str) -> FileResponse:
+    return _file_response(job_id, "reconviagen_raw.glb", "reconviagen_raw.glb", "model/gltf-binary")
+
+
+@app.get("/jobs/{job_id}/raw-ply")
+def get_raw_ply(job_id: str) -> FileResponse:
+    return _file_response(job_id, "reconviagen_raw.ply", "reconviagen_raw.ply", "application/octet-stream")
+
+
 @app.get("/jobs/{job_id}/print")
 def get_print(job_id: str) -> FileResponse:
     return _file_response(job_id, "reconviagen_metric_print_mm.stl", "reconviagen_metric_print_mm.stl", "model/stl")
@@ -115,14 +157,14 @@ def _store_upload(scan_package: UploadFile) -> tuple[str, Path, Path]:
     return job_id, job_dir, package_path
 
 
-def _run_job(job_id: str, package_path: Path, job_dir: Path) -> None:
+def _run_job(job_id: str, package_path: Path, job_dir: Path, options: ReconstructionOptions) -> None:
     started = time.monotonic()
     _log(f"job {job_id}: waiting for reconstruction lock")
     with _LOCK:
         _log(f"job {job_id}: processing started")
         _write_status(job_dir, "processing")
         try:
-            reconstruct_scan(package_path, job_dir / "output")
+            reconstruct_scan(package_path, job_dir / "output", options=options)
         except Exception as exc:
             _log(f"job {job_id}: failed after {time.monotonic() - started:.1f}s: {exc}")
             (job_dir / "error.txt").write_text(str(exc))
@@ -146,6 +188,23 @@ def _file_response(job_id: str, filename: str, download_name: str, media_type: s
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"{download_name} not found")
     return FileResponse(path, filename=download_name, media_type=media_type)
+
+
+def _worker_capability(worker_url: str, name: str) -> tuple[str, str | None]:
+    if not worker_url:
+        return "unavailable", f"{name} is not configured."
+    request = urllib.request.Request(worker_url.rstrip("/") + "/health", method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=2) as response:
+            payload = json.loads(response.read())
+        state = payload.get("status", "available")
+        if state == "ok":
+            state = "available"
+        if state not in {"available", "loading", "unavailable"}:
+            state = "available"
+        return state, payload.get("reason")
+    except (urllib.error.URLError, TimeoutError, ConnectionError, json.JSONDecodeError) as exc:
+        return "loading", f"{name} health check failed: {exc}"
 
 
 def _log(message: str) -> None:
